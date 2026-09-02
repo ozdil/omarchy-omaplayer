@@ -53,6 +53,7 @@ def get_auth_data():
     return {"spotify_user": "", "spotify_premium": False, "yt_cookies": False, "qobuz_user": ""}
 
 def save_auth_data(data):
+    os.makedirs(os.path.dirname(AUTH_FILE), mode=0o700, exist_ok=True)
     try:
         with open(AUTH_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -160,7 +161,6 @@ def get_spotify_mpris():
                 m = re.search(r'(org\.mpris\.MediaPlayer2\.[a-zA-Z0-9_.-]+)', line)
                 if m:
                     service = m.group(1)
-                    # Query Title
                     meta_res = subprocess.run(
                         ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Metadata"],
                         capture_output=True, text=True, timeout=0.6, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
@@ -185,10 +185,15 @@ def get_spotify_mpris():
                         "status": status,
                         "is_running": True,
                         "source": "spotify",
-                        "source_name": "󰓇 Spotify Premium",
+                        "source_name": "Spotify Premium",
                         "title": sanitize_str(title, 40),
                         "artist": sanitize_str(artist, 35),
                         "album": sanitize_str(album, 35),
+                        "codec": "Ogg Vorbis",
+                        "bitrate_kbps": 320,
+                        "sample_rate": "44.1 kHz",
+                        "is_lossless": False,
+                        "quality_label": "320 kbps (Extreme)",
                         "position_sec": 0,
                         "length_sec": 0,
                         "volume_pct": 85,
@@ -199,12 +204,7 @@ def get_spotify_mpris():
     return None
 
 def get_playback_info():
-    # 1. Check Spotify MPRIS first if active
-    sp_data = get_spotify_mpris()
-    if sp_data and sp_data.get("status") == "PLAYING":
-        return sp_data
-
-    # 2. Check native terminal MPV engine
+    # 1. Check native terminal MPV engine
     if os.path.exists(SOCKET_PATH):
         idle = send_mpv_command(["get_property", "idle-active"])
         if idle is False:
@@ -214,30 +214,53 @@ def get_playback_info():
             dur = send_mpv_command(["get_property", "duration"]) or 0
             vol = send_mpv_command(["get_property", "volume"]) or 85
 
+            # Query Audio Specs
+            raw_codec = str(send_mpv_command(["get_property", "audio-codec-name"]) or "opus").upper()
+            raw_bitrate = send_mpv_command(["get_property", "audio-bitrate"]) or 0
+            raw_sr = send_mpv_command(["get_property", "audio-params/samplerate"]) or 48000
+            
+            bitrate_kbps = int(raw_bitrate / 1000) if raw_bitrate else 256
+            sr_khz = f"{float(raw_sr) / 1000:.1f} kHz"
+            is_lossless = raw_codec in ("FLAC", "WAV", "ALAC", "PCM_S16LE", "PCM_S24LE", "PCM_S32LE")
+
+            if is_lossless:
+                quality_label = f"💎 LOSSLESS ({raw_codec} 24-bit • {sr_khz})"
+            elif bitrate_kbps >= 300:
+                quality_label = f"⭐ {bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
+            else:
+                quality_label = f"🎧 {bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
+
             state = get_saved_state()
             source = state.get("active_source", "terminal")
             source_labels = {
-                "spotify": "󰓇 Spotify CLI",
-                "youtube": "󰗃 YouTube Music",
-                "qobuz": "🎵 Qobuz Hi-Res",
-                "radio": "📻 Canlı İnternet Radyosu",
-                "local": "📁 Yerel Müzik Arşivi"
+                "spotify": "Spotify CLI",
+                "youtube": "YouTube Music",
+                "qobuz": "Qobuz Hi-Res",
+                "radio": "Canlı Radyo",
+                "local": "Yerel Müzik"
             }
 
             return {
                 "status": "PAUSED" if paused else "PLAYING",
                 "is_running": True,
                 "source": source,
-                "source_name": source_labels.get(source, "🎵 OmaPlayer"),
+                "source_name": source_labels.get(source, "OmaPlayer"),
                 "title": sanitize_str(state.get("current_title") or media_title, 40),
                 "artist": sanitize_str(state.get("current_artist") or "Terminal Akış", 35),
                 "album": "OmaPlayer Native Engine",
+                "codec": raw_codec,
+                "bitrate_kbps": bitrate_kbps,
+                "sample_rate": sr_khz,
+                "is_lossless": is_lossless,
+                "quality_label": quality_label,
                 "position_sec": int(pos) if isinstance(pos, (int, float)) else 0,
                 "length_sec": int(dur) if isinstance(dur, (int, float)) else 0,
                 "volume_pct": int(vol) if isinstance(vol, (int, float)) else 85,
                 "service": "OmaPlayer MPV Daemon"
             }
 
+    # 2. Check Spotify MPRIS
+    sp_data = get_spotify_mpris()
     if sp_data:
         return sp_data
 
@@ -248,10 +271,15 @@ def get_playback_info():
         "status": "STOPPED",
         "is_running": False,
         "source": state.get("active_source", "spotify"),
-        "source_name": "🎵 OmaPlayer",
+        "source_name": "OmaPlayer",
         "title": "Müzik Çalmıyor",
         "artist": f"Hesap: {user_badge}",
         "album": "",
+        "codec": "None",
+        "bitrate_kbps": 0,
+        "sample_rate": "0 kHz",
+        "is_lossless": False,
+        "quality_label": "Beklemede",
         "position_sec": 0,
         "length_sec": 0,
         "volume_pct": 0,
@@ -259,7 +287,6 @@ def get_playback_info():
     }
 
 def control_playback(action):
-    # If MPV is active, control via IPC
     if os.path.exists(SOCKET_PATH):
         if action == "play_pause":
             send_mpv_command(["cycle", "pause"])
@@ -274,7 +301,6 @@ def control_playback(action):
             send_mpv_command(["stop"])
             return True
 
-    # Fallback to Spotify MPRIS
     sp_data = get_spotify_mpris()
     if sp_data and sp_data.get("service"):
         srv = sp_data["service"]

@@ -230,6 +230,8 @@ def main():
         artist = data.get("artist", "")
         raw_src = data.get("source_name", "OmaPlayer")
         src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
+        quality = data.get("quality_label", "Standart")
+        is_lossless = data.get("is_lossless", False)
 
         pos = data.get("position_sec", 0)
         length = data.get("length_sec", 0)
@@ -251,9 +253,9 @@ def main():
         # Top border
         print("\033[1;36m" + "┌" + ("─" * (inner_w + 2)) + "┐" + "\033[0m")
 
-        # Header
+        # Header with Quality Badge
         h_left = "  \033[1;37mOMAPLAYER\033[0m"
-        h_right = f"[{src_label[:14]}]"
+        h_right = f"[{src_label[:12]}]"
         spaces = max(1, inner_w - len(strip_ansi(h_left)) - len(h_right) - 2)
         print(make_row(h_left + (" " * spaces) + f"\033[0;90m{h_right}\033[0m", inner_w))
 
@@ -263,6 +265,11 @@ def main():
         print(make_row("", inner_w))
         t_styled = f"  \033[1;32m{track_full[:inner_w-4]}\033[0m"
         print(make_row(t_styled, inner_w))
+
+        # Hi-Fi Lossless & Format Line
+        q_color = "\033[1;35m" if is_lossless else "\033[1;33m"
+        q_line = f"  {q_color}{quality}\033[0m"
+        print(make_row(q_line, inner_w))
 
         # Progress & Status
         p_bar = render_progress_bar(pos, length, max(8, inner_w - 26))
@@ -278,7 +285,7 @@ def main():
         # Divider
         print("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
 
-        # Clean Shortcuts Footer with Playlists [p]
+        # Clean Shortcuts Footer
         f1 = "  \033[1;32m1\033[0m:Spotify \033[1;31m2\033[0m:YT \033[1;33m3\033[0m:Radyo \033[1;35mp\033[0m:Listeler \033[1;36m5\033[0m:Hesap \033[1;37mf\033[0m:Ara"
         print(make_row(f1, inner_w))
 
