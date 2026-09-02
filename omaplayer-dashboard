@@ -5,6 +5,7 @@ import subprocess
 import json
 import time
 import select
+import shutil
 
 AUTH_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/auth.json")
 
@@ -78,13 +79,13 @@ def format_time(seconds):
     s = seconds % 60
     return f"{m:02d}:{s:02d}"
 
-def render_progress_bar(pos, length, width=22):
+def render_progress_bar(pos, length, width=24):
     if length <= 0:
         return f"[{'░' * width}] Canlı Yayın"
     ratio = min(1.0, max(0.0, pos / length))
     filled = int(ratio * width)
     bar = "█" * filled + "░" * (width - filled)
-    return f"[{bar}] {format_time(pos)}/{format_time(length)}"
+    return f"[{bar}] {format_time(pos)} / {format_time(length)}"
 
 def render_volume_bar(vol, width=10):
     ratio = min(1.0, max(0.0, vol / 100.0))
@@ -171,98 +172,145 @@ def account_dialog():
     except Exception:
         pass
 
+def render_compact_view(data, auth, osc_frames, frame_idx):
+    title = data.get("title", "Müzik Çalmıyor")
+    artist = data.get("artist", "OmaPlayer CLI")
+    src_name = data.get("source_name", "OmaPlayer")
+    status = data.get("status", "STOPPED")
+    is_playing = (status == "PLAYING")
+    pos = data.get("position_sec", 0)
+    length = data.get("length_sec", 0)
+    vol = data.get("volume_pct", 85)
+
+    user_info = auth.get("spotify_user") or "Misafir"
+    prem_badge = " ⭐ PREM" if auth.get("spotify_premium") else ""
+
+    if is_playing:
+        osc1, osc2, _ = osc_frames[frame_idx % len(osc_frames)]
+        st_text = "\033[1;32m▶️ ÇALIYOR\033[0m"
+    else:
+        osc1 = " ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂  "
+        osc2 = " ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃  "
+        st_text = "\033[1;33m⏸️ DURAKLATILDI\033[0m" if status == "PAUSED" else "\033[0;90m⏹️ DURDU\033[0m"
+
+    print("\033[1;36m╔══════════════════════════════════════╦════════════════════════════════════════════╗\033[0m")
+    print("║  🎛️  \033[1;33mMENÜ & PLATFORMLAR\033[0m               ║  🎵  \033[1;37mÇALAN MÜZİK & CANLI OSİLOSKOP\033[0m         ║")
+    print("\033[1;36m╠══════════════════════════════════════╬════════════════════════════════════════════╣\033[0m")
+    print(f"║  \033[1;32m[1]\033[0m 󰓇 \033[1;37mSpotify CLI Stüdyosu\033[0m       ║  \033[1;37mParça   :\033[0m \033[1;32m{title[:26]:<26}\033[0m ║")
+    print(f"║  \033[1;31m[2]\033[0m 󰗃 \033[1;37mYouTube Music CLI\033[0m          ║  \033[1;37mSanatçı :\033[0m \033[1;36m{artist[:26]:<26}\033[0m ║")
+    print(f"║  \033[1;33m[3]\033[0m 📻 \033[1;37mCanlı İnternet Radyoları\033[0m   ║  \033[1;37mKaynak  :\033[0m \033[1;35m{src_name[:26]:<26}\033[0m ║")
+    print(f"║  \033[1;35m[4]\033[0m 📁 \033[1;37mYerel Arşiv (~/Music)\033[0m      ║  \033[1;37mDurum   :\033[0m {st_text:<38} ║")
+    print(f"║  \033[1;36m[5]\033[0m 🔑 \033[1;37mHesap & Üyelik Girişi\033[0m     ║  \033[1;37mOturum  :\033[0m \033[0;90m{user_info[:14]}{prem_badge}\033[0m{' ' * max(0, 12 - len(user_info) - len(prem_badge))} ║")
+    print("\033[1;36m╠──────────────────────────────────────╫────────────────────────────────────────────┨\033[0m")
+    print(f"║  \033[1;32m[f]\033[0m 🔍 \033[1;37mŞarkı / Sanatçı Ara\033[0m        ║  \033[1;33m🌊 CANLI OSİLOSKOP / SPEKTRUM:\033[0m              ║")
+    print(f"║  \033[1;37m[Space]\033[0m ⏯️ \033[1;37mOynat / Duraklat\033[0m     ║    \033[1;36m{osc1[:38]}\033[0m ║")
+    print(f"║  \033[1;37m[+ / -]\033[0m 🔊 \033[1;37mSes Ayarla (%5)\033[0m      ║    \033[1;35m{osc2[:38]}\033[0m ║")
+    print(f"║  \033[1;31m[x]\033[0m ⏹️ \033[1;37mMüziği Durdur\033[0m          ║  ⏱️  {render_progress_bar(pos, length, 16):<35} ║")
+    print(f"║  \033[1;31m[q]\033[0m 🚪 \033[1;37mArka Planda Çal & Çık\033[0m  ║  {render_volume_bar(vol, 12):<38} ║")
+    print("\033[1;36m╚══════════════════════════════════════╩════════════════════════════════════════════╝\033[0m")
+
+def render_fullscreen_view(data, auth, osc_frames, frame_idx, cols, lines):
+    title = data.get("title", "Müzik Çalmıyor")
+    artist = data.get("artist", "OmaPlayer CLI")
+    src_name = data.get("source_name", "OmaPlayer")
+    status = data.get("status", "STOPPED")
+    is_playing = (status == "PLAYING")
+    pos = data.get("position_sec", 0)
+    length = data.get("length_sec", 0)
+    vol = data.get("volume_pct", 85)
+
+    user_info = auth.get("spotify_user") or "Misafir (Free)"
+    prem_badge = " ⭐ SPOTIFY PREMIUM (320 kbps)" if auth.get("spotify_premium") else " 🆓 Standart"
+
+    if is_playing:
+        osc1, osc2, osc3 = osc_frames[frame_idx % len(osc_frames)]
+        st_text = "\033[1;32m▶️ ÇALIYOR (Hi-Res Audio Engine)\033[0m"
+    else:
+        osc1 = " ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂ "
+        osc2 = " ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃ "
+        osc3 = " ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂ "
+        st_text = "\033[1;33m⏸️ DURAKLATILDI\033[0m" if status == "PAUSED" else "\033[0;90m⏹️ DURDURULDU\033[0m"
+
+    # 3-Column Wide Studio Layout
+    w_total = min(cols - 2, 118)
+    w_left = 32
+    w_mid = 48
+    w_right = w_total - w_left - w_mid - 4
+
+    print("\033[1;35m" + "╔" + "═" * (w_total) + "╗" + "\033[0m")
+    print(f"║  󰎆 \033[1;37mOMAPLAYER PRO HI-FI STUDIO\033[0m • \033[1;33mGAME GARAJ SLAYER 4 ULTRA DAC\033[0m" + " " * (w_total - 62) + "║")
+    print("\033[1;35m" + "╠" + "═" * w_left + "╦" + "═" * w_mid + "╦" + "═" * w_right + "╣" + "\033[0m")
+    
+    print(f"║ 🎛️  \033[1;33mPLATFORMLAR & KONTROL\033[0m     ║ 🎵  \033[1;37mÇALAN PARÇA & CANLI SPEKTRUM\033[0m       ║ ⚙️  \033[1;36mSES & DONANIM DETAYI\033[0m   ║")
+    print("\033[1;35m" + "╠" + "─" * w_left + "╫" + "─" * w_mid + "╫" + "─" * w_right + "┨" + "\033[0m")
+
+    # Row 1
+    r1_l = f" \033[1;32m[1]\033[0m 󰓇 Spotify Stüdyosu       "
+    r1_m = f" \033[1;37mParça   :\033[0m \033[1;32m{title[:35]:<35}\033[0m "
+    r1_r = f" 🎧 \033[1;37mÇıkış  :\033[0m PipeWire/ALSA "
+    print(f"║ {r1_l:<30} ║ {r1_m:<46} ║ {r1_r:<33} ║")
+
+    # Row 2
+    r2_l = f" \033[1;31m[2]\033[0m 󰗃 YouTube Music CLI      "
+    r2_m = f" \033[1;37mSanatçı :\033[0m \033[1;36m{artist[:35]:<35}\033[0m "
+    r2_r = f" 🎚️  \033[1;37mBitrate:\033[0m 320 kbps (Max)"
+    print(f"║ {r2_l:<30} ║ {r2_m:<46} ║ {r2_r:<33} ║")
+
+    # Row 3
+    r3_l = f" \033[1;33m[3]\033[0m 📻 Canlı Radyolar        "
+    r3_m = f" \033[1;37mKaynak  :\033[0m \033[1;35m{src_name[:35]:<35}\033[0m "
+    r3_r = f" 💎 \033[1;37mFormat :\033[0m 24-bit / 48kHz"
+    print(f"║ {r3_l:<30} ║ {r3_m:<46} ║ {r3_r:<33} ║")
+
+    # Row 4
+    r4_l = f" \033[1;35m[4]\033[0m 📁 Yerel Müzik (~/Music) "
+    r4_m = f" \033[1;37mDurum   :\033[0m {st_text:<42} "
+    r4_r = f" 👤 \033[1;37mHesap  :\033[0m {user_info[:14]}  "
+    print(f"║ {r4_l:<30} ║ {r4_m:<46} ║ {r4_r:<33} ║")
+
+    # Row 5
+    r5_l = f" \033[1;36m[5]\033[0m 🔑 Hesap & Giriş Ayarları"
+    r5_m = f" ⏱️  {render_progress_bar(pos, length, 26):<43} "
+    r5_r = f" ⭐ \033[1;37mYetki  :\033[0m {prem_badge[:14]}  "
+    print(f"║ {r5_l:<30} ║ {r5_m:<46} ║ {r5_r:<33} ║")
+
+    # Divider
+    print("\033[1;35m" + "╠" + "─" * w_left + "╫" + "─" * w_mid + "╫" + "─" * w_right + "┨" + "\033[0m")
+
+    # Row 6: Multi-frequency Oscilloscope
+    print(f"║  \033[1;32m[f]\033[0m 🔍 \033[1;37mŞarkı / Sanatçı Ara\033[0m     ║  \033[1;33m🌊 8-BANT CANLI OSİLOSKOP / SPEKTRUM:\033[0m       ║ 🎛️  \033[1;33mEQUALIZER PRESETS\033[0m   ║")
+    print(f"║  \033[1;37m[Space]\033[0m ⏯️ \033[1;37mOynat / Duraklat\033[0m ║    \033[1;36m{osc1[:42]}\033[0m ║ • Flat / Doğal          ║")
+    print(f"║  \033[1;37m[+ / -]\033[0m 🔊 \033[1;37mSes Ayarla (%5)\033[0m  ║    \033[1;35m{osc2[:42]}\033[0m ║ • Bass Boost (Aktif 🔊) ║")
+    print(f"║  \033[1;31m[x]\033[0m ⏹️ \033[1;37mMüziği Durdur\033[0m      ║    \033[1;34m{osc3[:42]}\033[0m ║ • Gaming & Spatial Audio║")
+    print(f"║  \033[1;31m[q]\033[0m 🚪 \033[1;37mArka Planda Çal & Çık\033[0m║  {render_volume_bar(vol, 20):<46} ║ • Hi-Res Studio Master  ║")
+
+    print("\033[1;35m" + "╚" + "═" * w_left + "╩" + "═" * w_mid + "╩" + "═" * w_right + "╝" + "\033[0m")
+
 def main():
-    # Multi-line dynamic oscilloscope frames
     osc_frames = [
-        ("  ▂▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▅▆▇█▇▆▅▃  ", " ▃▅▇████████▇▅▃ ▂▃▅▇████████▇ "),
-        (" ▂▃▅▆▇████▇▆▅▃▂   ▂▃▄▅▆▇█▇▆▅  ", " ▅▇██████████▇▅ ▃▅▇█████████▇ "),
-        (" ▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▄▅▆▇████▇▆  ", " ▇████████████▇ ▅███████████▇ "),
-        (" ▅▆▇████▇▆▅▄▃▂   ▂▃▅▆▇████▇▆  ", " █▇▆▅▃▂ ▂▃▅▆▇██ ▇████████████ "),
-        (" ▇████████▇▆▅▃   ▃▄▅▆▇████▇▆  ", " ▅▃▂   ▂▃▅▆▇███ █████████████ "),
-        (" ▆▅▄▃▂ ▂▃▄▅▆▇█   ▅▆▇██████▇▆  ", " ▂  ▂▃▄▅▆▇█████ ▇████████████ ")
+        ("  ▂▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▅▆▇█▇▆▅▃  ", " ▃▅▇████████▇▅▃ ▂▃▅▇████████▇ ", "  ▂▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▅▆▇█▇▆▅▃  "),
+        (" ▂▃▅▆▇████▇▆▅▃▂   ▂▃▄▅▆▇█▇▆▅  ", " ▅▇██████████▇▅ ▃▅▇█████████▇ ", " ▂▃▅▆▇████▇▆▅▃▂   ▂▃▄▅▆▇█▇▆▅  "),
+        (" ▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▄▅▆▇████▇▆  ", " ▇████████████▇ ▅███████████▇ ", " ▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▄▅▆▇████▇▆  "),
+        (" ▅▆▇████▇▆▅▄▃▂   ▂▃▅▆▇████▇▆  ", " █▇▆▅▃▂ ▂▃▅▆▇██ ▇████████████ ", " ▅▆▇████▇▆▅▄▃▂   ▂▃▅▆▇████▇▆  "),
+        (" ▇████████▇▆▅▃   ▃▄▅▆▇████▇▆  ", " ▅▃▂   ▂▃▅▆▇███ █████████████ ", " ▇████████▇▆▅▃   ▃▄▅▆▇████▇▆  "),
+        (" ▆▅▄▃▂ ▂▃▄▅▆▇█   ▅▆▇██████▇▆  ", " ▂  ▂▃▄▅▆▇█████ ▇████████████ ", " ▆▅▄▃▂ ▂▃▄▅▆▇█   ▅▆▇██████▇▆  ")
     ]
     frame_idx = 0
 
     while True:
         auth = get_auth_data()
-        user_info = auth.get("spotify_user") or "Misafir"
-        prem_badge = " ⭐ PREM" if auth.get("spotify_premium") else ""
-
         data = get_engine_data()
-        status = data.get("status", "STOPPED")
-        is_playing = (status == "PLAYING")
-        title = data.get("title", "Müzik Çalmıyor")
-        artist = data.get("artist", "OmaPlayer CLI")
-        src_name = data.get("source_name", "OmaPlayer")
-        pos = data.get("position_sec", 0)
-        length = data.get("length_sec", 0)
-        vol = data.get("volume_pct", 85)
-
-        if is_playing:
-            osc1, osc2 = osc_frames[frame_idx % len(osc_frames)]
-            frame_idx += 1
-            st_text = "\033[1;32m▶️ ÇALIYOR\033[0m"
-        else:
-            osc1 = " ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂  "
-            osc2 = " ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃  "
-            st_text = "\033[1;33m⏸️ DURAKLATILDI\033[0m" if status == "PAUSED" else "\033[0;90m⏹️ DURDU\033[0m"
+        cols, lines = shutil.get_terminal_size((80, 24))
 
         os.system("clear")
-        print("\033[1;36m╔══════════════════════════════════════╦════════════════════════════════════════════╗\033[0m")
-        print("║  🎛️  \033[1;33mMENÜ & PLATFORMLAR\033[0m               ║  🎵  \033[1;37mÇALAN MÜZİK & CANLI OSİLOSKOP\033[0m         ║")
-        print("\033[1;36m╠══════════════════════════════════════╬════════════════════════════════════════════╣\033[0m")
+        if cols >= 96 and lines >= 16:
+            # Fullscreen / Wide Studio Mode
+            render_fullscreen_view(data, auth, osc_frames, frame_idx, cols, lines)
+        else:
+            # Compact / Floating Mini Window Mode
+            render_compact_view(data, auth, osc_frames, frame_idx)
 
-        # Row 1
-        l1 = f" \033[1;32m[1]\033[0m 󰓇 \033[1;37mSpotify CLI Stüdyosu\033[0m       "
-        r1 = f" \033[1;37mParça   :\033[0m \033[1;32m{title[:28]:<28}\033[0m "
-        print(f"║ {l1:<46} ║ {r1:<51} ║")
-
-        # Row 2
-        l2 = f" \033[1;31m[2]\033[0m 󰗃 \033[1;37mYouTube Music CLI\033[0m          "
-        r2 = f" \033[1;37mSanatçı :\033[0m \033[1;36m{artist[:28]:<28}\033[0m "
-        print(f"║ {l2:<46} ║ {r2:<51} ║")
-
-        # Row 3
-        l3 = f" \033[1;33m[3]\033[0m 📻 \033[1;37mCanlı İnternet Radyoları\033[0m   "
-        r3 = f" \033[1;37mKaynak  :\033[0m \033[1;35m{src_name[:28]:<28}\033[0m "
-        print(f"║ {l3:<46} ║ {r3:<51} ║")
-
-        # Row 4
-        l4 = f" \033[1;35m[4]\033[0m 📁 \033[1;37mYerel Arşiv (~/Music)\033[0m      "
-        r4 = f" \033[1;37mDurum   :\033[0m {st_text:<38} "
-        print(f"║ {l4:<46} ║ {r4:<51} ║")
-
-        # Row 5
-        l5 = f" \033[1;36m[5]\033[0m 🔑 \033[1;37mHesap & Üyelik Girişi\033[0m     "
-        r5 = f" \033[1;37mOturum  :\033[0m \033[0;90m{user_info[:16]}{prem_badge}\033[0m{' ' * max(0, 14 - len(user_info) - len(prem_badge))} "
-        print(f"║ {l5:<46} ║ {r5:<51} ║")
-
-        # Row 6: Divider
-        print("\033[1;36m╠──────────────────────────────────────╫────────────────────────────────────────────┨\033[0m")
-
-        # Row 7: Oscilloscope header & lines
-        l7 = f" \033[1;32m[f]\033[0m 🔍 \033[1;37mŞarkı / Sanatçı Ara\033[0m        "
-        r7 = f" \033[1;33m🌊 CANLI OSİLOSKOP / SPEKTRUM:\033[0m              "
-        print(f"║ {l7:<46} ║ {r7:<51} ║")
-
-        l8 = f" \033[1;37m[Space]\033[0m ⏯️ \033[1;37mOynat / Duraklat\033[0m     "
-        r8 = f"   \033[1;36m{osc1}\033[0m "
-        print(f"║ {l8:<46} ║ {r8:<51} ║")
-
-        l9 = f" \033[1;37m[+ / -]\033[0m 🔊 \033[1;37mSes Ayarla (%5)\033[0m      "
-        r9 = f"   \033[1;35m{osc2}\033[0m "
-        print(f"║ {l9:<46} ║ {r9:<51} ║")
-
-        l10 = f" \033[1;31m[x]\033[0m ⏹️ \033[1;37mMüziği Durdur\033[0m          "
-        r10 = f" ⏱️  {render_progress_bar(pos, length, 16):<35} "
-        print(f"║ {l10:<46} ║ {r10:<51} ║")
-
-        l11 = f" \033[1;31m[q]\033[0m 🚪 \033[1;37mArka Planda Çal & Çık\033[0m  "
-        r11 = f" {render_volume_bar(vol, 12):<38} "
-        print(f"║ {l11:<46} ║ {r11:<51} ║")
-
-        print("\033[1;36m╚══════════════════════════════════════╩════════════════════════════════════════════╝\033[0m")
-
+        frame_idx += 1
         key = get_key()
 
         if key in ('q', 'Q', 'ESC'):
