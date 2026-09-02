@@ -45,11 +45,11 @@ def get_engine_data():
     except Exception:
         return {}
 
-def run_action(arg):
+def run_action(args):
     plugin_dir = os.path.dirname(os.path.realpath(__file__))
     engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
     try:
-        subprocess.run([engine_bin, arg], capture_output=True, timeout=1.0)
+        subprocess.run([engine_bin] + args, capture_output=True, timeout=2.0)
     except Exception:
         pass
 
@@ -58,7 +58,7 @@ def format_time(seconds):
     s = seconds % 60
     return f"{m:02d}:{s:02d}"
 
-def render_progress_bar(pos, length, width=28):
+def render_progress_bar(pos, length, width=32):
     if length <= 0:
         return f"[{'░' * width}] Canlı Akış / Yayın"
     ratio = min(1.0, max(0.0, pos / length))
@@ -72,54 +72,34 @@ def render_volume_bar(vol, width=12):
     bar = "█" * filled + "░" * (width - filled)
     return f"🔊 %{vol:<3} [{bar}]"
 
-def select_source_menu():
-    plugin_dir = os.path.dirname(os.path.realpath(__file__))
-    engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
-
+def search_and_play_menu():
     os.system("clear")
     print("\033[1;36m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-    print("║  󰎆 \033[1;33mOMAPLAYER\033[0m • \033[1;37mMüzik & Yayın Kaynağı Seçimi\033[0m                                 ║")
+    print("║  🔍 \033[1;33mOMAPLAYER CLI\033[0m • \033[1;37mTerminal Müzik Arama & Çalma\033[0m                             ║")
     print("\033[1;36m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-    print("  Lütfen dinlemek istediğiniz müzik platformunu veya kaynağı seçin:\n")
-    print("  \033[1;32m[1]\033[0m 󰓇 \033[1;37mSpotify\033[0m               \033[0;90m(Premium / Free MPRIS İstemcisi)\033[0m")
-    print("  \033[1;31m[2]\033[0m 󰗃 \033[1;37mYouTube Music\033[0m         \033[0;90m(Web & MPRIS Entegrasyonu)\033[0m")
-    print("  \033[1;36m[3]\033[0m 🎵 \033[1;37mQobuz\033[0m                 \033[0;90m(Hi-Res 24-bit Stüdyo Kalitesi)\033[0m")
-    print("  \033[1;34m[4]\033[0m 🌊 \033[1;37mTidal & SoundCloud\033[0m    \033[0;90m(Kayıpsız / Bağımsız Müzik)\033[0m")
-    print("  \033[1;33m[5]\033[0m 📻 \033[1;37mCanlı İnternet Radyoları\033[0m \033[1;32m[ÜCRETSİZ]\033[0m \033[0;90m(Lofi, Jazz, TRT, Rock)\033[0m")
-    print("  \033[1;35m[6]\033[0m 📁 \033[1;37mYerel Müzik Arşivi\033[0m       \033[0;90m(~/Music FLAC / MP3 / WAV)\033[0m")
-    print("\n  \033[0;90m[ESC / q] Geri Dön\033[0m\n")
-    print("\033[1;36m──────────────────────────────────────────────────────────────────────────────\033[0m")
-
+    print("  \033[1;37mDinlemek istediğiniz şarkıyı veya sanatçıyı yazın:\033[0m")
+    print("  \033[0;90m(Örnek: Daft Punk - Get Lucky, Ceza - Fark Var, Chopin Nocturne)\033[0m\n")
+    
     try:
-        c = input("  Seçiminiz [1-6]: ").strip()
+        q = input("  🎵 Şarkı / Sanatçı: ").strip()
     except Exception:
         return
 
-    mapping = {
-        "1": "spotify",
-        "2": "ytmusic",
-        "3": "qobuz",
-        "4": "tidal",
-        "5": "radio",
-        "6": "local"
-    }
+    if q:
+        print(f"\n  \033[1;32m⏳ '{q}' aranıyor ve terminalde oynatılıyor...\033[0m")
+        run_action(["--search", q])
+        time.sleep(1.0)
 
-    if c in mapping:
-        subprocess.run([engine_bin, "--set-source", mapping[c]], capture_output=True)
-
-def select_radio_menu():
-    plugin_dir = os.path.dirname(os.path.realpath(__file__))
-    engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
-
+def radio_menu():
     os.system("clear")
     print("\033[1;33m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-    print("║  📻 \033[1;37mCANLI İNTERNET RADYOLARI • Kesintisiz & Ücretsiz Yayın\033[0m                  ║")
+    print("║  📻 \033[1;37mCANLI İNTERNET RADYOLARI • Kesintisiz Terminal Yayını\033[0m                    ║")
     print("\033[1;33m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
     print("  \033[1;32m[1]\033[0m ☕ Lofi Beats (Sakin / Kodlama / Chill)")
     print("  \033[1;36m[2]\033[0m 🎷 Jazz Radio Classics (Klasik Caz)")
     print("  \033[1;35m[3]\033[0m 🌆 Nightwave Plaza (Synthwave / Cyberpunk)")
     print("  \033[1;31m[4]\033[0m 🎸 Classic Rock Radio (Efsane Rock)")
-    print("  \033[1;34m[5]\033[0m 📻 TRT Radyo 3 (Klasik & Senfoni)")
+    print("  \033[1;34m[5]\033[0m 📻 TRT Radyo 3 (Klasik Müzik & Kültür)")
     print("\n  \033[0;90m[ESC / q] Geri Dön\033[0m\n")
 
     try:
@@ -136,7 +116,40 @@ def select_radio_menu():
     }
 
     if c in st_map:
-        subprocess.run([engine_bin, "--play-radio", st_map[c]], capture_output=True)
+        run_action(["--play-radio", st_map[c]])
+
+def local_music_menu():
+    plugin_dir = os.path.dirname(os.path.realpath(__file__))
+    engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
+    
+    os.system("clear")
+    print("\033[1;35m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
+    print("║  📁 \033[1;37mYEREL MÜZİK ARŞİVİ (~/Music)\033[0m                                             ║")
+    print("\033[1;35m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
+
+    try:
+        res = subprocess.run([engine_bin, "--list-local"], capture_output=True, text=True, timeout=1.5)
+        tracks = json.loads(res.stdout) if res.returncode == 0 else []
+    except Exception:
+        tracks = []
+
+    if not tracks:
+        print("  \033[1;33m~/Music klasöründe ses dosyası (.flac, .mp3, .wav) bulunamadı.\033[0m\n")
+        input("  Devam etmek için Enter'a basın...")
+        return
+
+    for idx, t in enumerate(tracks[:15]):
+        print(f"  \033[1;36m[{idx+1:02d}]\033[0m 🎵 {t['name']}")
+
+    print("\n  \033[0;90m[q] Geri Dön\033[0m\n")
+    try:
+        c = input("  Çalmak İstediğiniz Parça Numarası: ").strip()
+        if c.isdigit():
+            val = int(c)
+            if 1 <= val <= len(tracks):
+                run_action(["--play-file", tracks[val-1]["path"]])
+    except Exception:
+        pass
 
 def main():
     anim_frames = [
@@ -153,18 +166,16 @@ def main():
         data = get_engine_data()
         status = data.get("status", "STOPPED")
         is_running = data.get("is_running", False)
-        source = data.get("source", "spotify")
         source_name = data.get("source_name", "OmaPlayer")
         title = data.get("title", "Müzik Çalmıyor")
-        artist = data.get("artist", "")
-        album = data.get("album", "")
+        artist = data.get("artist", "CLI Çalar Hazır")
         pos = data.get("position_sec", 0)
         length = data.get("length_sec", 0)
         vol = data.get("volume_pct", 85)
 
         os.system("clear")
         print("\033[1;35m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-        print(f"║  󰎆 \033[1;37mOMAPLAYER\033[0m • \033[1;33mEvrensel Müzik & Radyo Stüdyosu\033[0m [{source_name:<20}]   ║")
+        print(f"║  󰎆 \033[1;37mOMAPLAYER\033[0m • \033[1;33mSaf Terminal Müzik & Radyo Stüdyosu\033[0m [{source_name:<18}]   ║")
         print("\033[1;35m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
 
         if is_running:
@@ -176,19 +187,17 @@ def main():
             print(f"  {status_color}{status_icon}\033[0m   \033[1;36m{wave}\033[0m\n")
             print(f"  🎵 \033[1;37mParça:\033[0m   \033[1;32m{title}\033[0m")
             print(f"  👤 \033[1;37mSanatçı:\033[0m \033[1;36m{artist}\033[0m")
-            if album:
-                print(f"  💿 \033[1;37mAlbüm:\033[0m   \033[0;90m{album}\033[0m")
             print()
             print(f"  ⏱️  {render_progress_bar(pos, length, 32)}")
             print(f"  {render_volume_bar(vol)}")
         else:
-            print(f"  \033[1;33m⚠️  {source_name} şu anda aktif veya çalmıyor.\033[0m")
-            print("  Platformu başlatmak için \033[1;32m[l]\033[0m, kaynağı değiştirmek için \033[1;36m[s]\033[0m tuşuna basın.\n")
+            print("  \033[1;33mℹ️  Şu anda müzik çalmıyor.\033[0m")
+            print("  Arama yapmak için \033[1;32m[f]\033[0m, Canlı Radyo için \033[1;36m[r]\033[0m, Yerel Müzik için \033[1;35m[m]\033[0m tuşuna basın.\n")
 
         print("\n\033[1;35m──────────────────────────────────────────────────────────────────────────────\033[0m")
-        print("  \033[1;37m[Space]\033[0m ⏯️ Oynat/Dur | \033[1;37m[n]\033[0m ⏭️ Sonraki | \033[1;37m[p]\033[0m ⏮️ Önceki | \033[1;37m[+ / -]\033[0m 🔊 Ses")
-        print("  \033[1;33m[s]\033[0m 🔀 Kaynak Değiştir (Spotify/YT/Qobuz/Radyo) | \033[1;36m[r]\033[0m 📻 Radyo Listesi")
-        print("  \033[1;32m[l]\033[0m 🚀 Platformu Aç                          | \033[1;31m[q]\033[0m 🚪 Çıkış")
+        print("  \033[1;32m[f]\033[0m 🔍 Şarkı Ara & Çal (YT/Web) | \033[1;36m[r]\033[0m 📻 Canlı Radyolar | \033[1;35m[m]\033[0m 📁 Yerel Müzik")
+        print("  \033[1;37m[Space]\033[0m ⏯️ Oynat / Duraklat    | \033[1;37m[+ / -]\033[0m 🔊 Ses (%5)    | \033[1;31m[x]\033[0m ⏹️ Durdur")
+        print("  \033[1;31m[q]\033[0m 🚪 Çıkış (Arka planda çalmaya devam eder)")
         print("\033[1;35m──────────────────────────────────────────────────────────────────────────────\033[0m")
 
         key = get_key()
@@ -196,21 +205,19 @@ def main():
         if key in ('q', 'Q', 'ESC'):
             break
         elif key == ' ':
-            run_action("--play-pause")
-        elif key in ('n', 'N', 'RIGHT'):
-            run_action("--next")
-        elif key in ('p', 'P', 'LEFT'):
-            run_action("--prev")
+            run_action(["--play-pause"])
+        elif key in ('f', 'F', '1'):
+            search_and_play_menu()
+        elif key in ('r', 'R', '2'):
+            radio_menu()
+        elif key in ('m', 'M', '3'):
+            local_music_menu()
         elif key in ('+', '=', 'UP'):
-            run_action("--vol-up")
+            run_action(["--vol-up"])
         elif key in ('-', '_', 'DOWN'):
-            run_action("--vol-down")
-        elif key in ('s', 'S'):
-            select_source_menu()
-        elif key in ('r', 'R'):
-            select_radio_menu()
-        elif key in ('l', 'L'):
-            run_action("--launch")
+            run_action(["--vol-down"])
+        elif key in ('x', 'X'):
+            run_action(["--stop"])
 
 if __name__ == "__main__":
     main()
