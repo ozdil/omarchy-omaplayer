@@ -183,6 +183,14 @@ def render_progress_bar(pos, length, width=22):
     bar = "━" * filled + "●" + "─" * max(0, width - filled - 1)
     return f"[{bar[:width]}] {format_time(p_sec)} / {format_time(l_sec)}"
 
+def render_volume_bar(vol, width=12):
+    width = max(6, width)
+    v = int(float(vol)) if vol else 0
+    ratio = min(1.0, max(0.0, v / 100.0))
+    filled = int(ratio * width)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"Ses: %{v:<3} [{bar}]"
+
 def strip_ansi(s):
     return re.sub(r'\x1b\[[0-9;]*m', '', str(s))
 
@@ -194,6 +202,13 @@ def make_row(content, width):
     else:
         padding = " " * (width - vis_len)
         return "│ " + content + padding + " │"
+
+def pad_cell(content, width):
+    clean = strip_ansi(content)
+    vis_len = len(clean)
+    if vis_len > width:
+        return clean[:width]
+    return content + (" " * (width - vis_len))
 
 def get_key():
     if not sys.stdin.isatty():
@@ -330,13 +345,184 @@ def account_dialog():
     except Exception:
         pass
 
+# ==============================================================================
+# 1. COMPACT / MINI CARD RENDERER (< 92 cols or < 20 rows)
+# ==============================================================================
+def render_compact_view(data, auth, wave_frames, frame_idx, cols):
+    W = min(max(40, cols - 2), 68)
+    inner_w = W - 4
+
+    status = data.get("status", "STOPPED")
+    is_playing = (status == "PLAYING")
+    title = data.get("title", "Müzik Çalmıyor")
+    artist = data.get("artist", "")
+    raw_src = data.get("source_name", "OmaPlayer")
+    src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
+    quality = data.get("quality_label", "Standart")
+    is_lossless = data.get("is_lossless", False)
+
+    pos = data.get("position_sec", 0)
+    length = data.get("length_sec", 0)
+
+    track_full = f"{title} • {artist}" if artist else title
+    if is_playing:
+        st_badge = "\033[1;32m▶ CALIYOR\033[0m"
+        wave = wave_frames[frame_idx % len(wave_frames)]
+    elif status == "PAUSED":
+        st_badge = "\033[1;33m⏸ DURDU\033[0m"
+        wave = " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ "
+    else:
+        st_badge = "\033[0;90m■ KAPALI\033[0m"
+        wave = " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ "
+
+    buf = []
+    buf.append("\033[H\033[J")
+    buf.append("\033[1;36m" + "┌" + ("─" * (inner_w + 2)) + "┐" + "\033[0m")
+
+    # Header
+    h_left = "  \033[1;37mOMAPLAYER\033[0m"
+    h_right = f"[{src_label[:12]}]"
+    spaces = max(1, inner_w - len(strip_ansi(h_left)) - len(h_right) - 2)
+    buf.append(make_row(h_left + (" " * spaces) + f"\033[0;90m{h_right}\033[0m", inner_w))
+    buf.append("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
+
+    # Track Info
+    buf.append(make_row("", inner_w))
+    t_styled = f"  \033[1;32m{track_full[:inner_w-4]}\033[0m"
+    buf.append(make_row(t_styled, inner_w))
+
+    # Quality
+    q_color = "\033[1;35m" if is_lossless else "\033[1;33m"
+    q_clean = strip_ansi(quality)
+    q_styled = f"  {q_color}{q_clean[:inner_w-4]}\033[0m"
+    buf.append(make_row(q_styled, inner_w))
+
+    # Progress
+    p_bar = render_progress_bar(pos, length, max(8, inner_w - 28))
+    p_styled = f"  {st_badge} {p_bar}"
+    buf.append(make_row(p_styled, inner_w))
+
+    # Wave
+    buf.append(make_row("", inner_w))
+    w_styled = f"  \033[1;36m{wave[:inner_w-4]}\033[0m"
+    buf.append(make_row(w_styled, inner_w))
+    buf.append(make_row("", inner_w))
+
+    # Divider
+    buf.append("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
+
+    # Footer
+    f1 = "  \033[1;32m1\033[0m:Spotify \033[1;31m2\033[0m:YT \033[1;33m3\033[0m:Radyo \033[1;35mp\033[0m:Listeler \033[1;36m5\033[0m:Hesap \033[1;37mf\033[0m:Ara"
+    buf.append(make_row(f1, inner_w))
+
+    f2 = "  \033[1;37mSpace\033[0m:Oynat/Dur   \033[1;37m+/-\033[0m:Ses   \033[1;31mx\033[0m:Durdur   \033[1;31mq\033[0m:Cikis"
+    buf.append(make_row(f2, inner_w))
+
+    buf.append("\033[1;36m" + "└" + ("─" * (inner_w + 2)) + "┘" + "\033[0m")
+    return "\n".join(buf) + "\n"
+
+# ==============================================================================
+# 2. FULLSCREEN MEGA HI-FI WORKSTATION RENDERER (Super + F / >= 92 cols)
+# ==============================================================================
+def render_fullscreen_view(data, auth, wave_frames, frame_idx, cols):
+    W = min(cols - 2, 124)
+    w_left = 28
+    w_right = 32
+    w_mid = W - w_left - w_right - 4
+
+    status = data.get("status", "STOPPED")
+    is_playing = (status == "PLAYING")
+    title = data.get("title", "Müzik Çalmıyor")
+    artist = data.get("artist", "")
+    raw_src = data.get("source_name", "OmaPlayer")
+    src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
+    pos = data.get("position_sec", 0)
+    length = data.get("length_sec", 0)
+    vol = data.get("volume_pct", 85)
+    codec = data.get("codec", "OPUS")
+    sr = data.get("sample_rate", "48.0 kHz")
+    bitrate = data.get("bitrate_kbps", 320)
+    is_lossless = data.get("is_lossless", False)
+
+    track_full = f"{title} • {artist}" if artist else title
+    st_text = "\033[1;32m▶ CALIYOR (Hi-Res Engine)\033[0m" if is_playing else ("\033[1;33m⏸ DURDURULDU\033[0m" if status == "PAUSED" else "\033[0;90m■ BEKLEMEDE\033[0m")
+
+    # Multi-tier wave spectrum
+    wave1 = wave_frames[frame_idx % len(wave_frames)]
+    wave2 = wave_frames[(frame_idx + 2) % len(wave_frames)]
+
+    buf = []
+    buf.append("\033[H\033[J")
+
+    # Main Top Frame
+    buf.append("\033[1;35m┌" + ("─" * W) + "┐\033[0m")
+    title_bar = "OMAPLAYER PRO HI-FI STUDIO • GAME GARAJ SLAYER 4 ULTRA DAC"
+    buf.append("│ " + pad_cell(f"\033[1;37m{title_bar}\033[0m", W - 2) + " │")
+    buf.append("\033[1;35m├" + ("─" * w_left) + "┬" + ("─" * w_mid) + "┬" + ("─" * w_right) + "┤\033[0m")
+
+    # Column Headers
+    c1_h = " \033[1;33mPLATFORMLAR & KONTROL\033[0m"
+    c2_h = " \033[1;37mCALAN PARCA & SPEKTRUM\033[0m"
+    c3_h = " \033[1;36mDONANIM & SES DETAYI\033[0m"
+    buf.append(f"│{pad_cell(c1_h, w_left)}│{pad_cell(c2_h, w_mid)}│{pad_cell(c3_h, w_right)}│")
+    buf.append("\033[1;35m├" + ("─" * w_left) + "┼" + ("─" * w_mid) + "┼" + ("─" * w_right) + "┤\033[0m")
+
+    # Row 1
+    r1_1 = " \033[1;32m[1]\033[0m Spotify Premium Stüdyo"
+    r1_2 = f" \033[1;32m{track_full[:w_mid-4]}\033[0m"
+    r1_3 = " Cikis: PipeWire / ALSA"
+    buf.append(f"│{pad_cell(r1_1, w_left)}│{pad_cell(r1_2, w_mid)}│{pad_cell(r1_3, w_right)}│")
+
+    # Row 2
+    r2_1 = " \033[1;31m[2]\033[0m YouTube Music CLI"
+    r2_2 = f" Durum  : {st_text}"
+    r2_3 = f" Bitrate: {bitrate} kbps (Max)"
+    buf.append(f"│{pad_cell(r2_1, w_left)}│{pad_cell(r2_2, w_mid)}│{pad_cell(r2_3, w_right)}│")
+
+    # Row 3
+    r3_1 = " \033[1;33m[3]\033[0m Canlı Radyo İstasyonları"
+    r3_2 = f" Kaynak : \033[1;35m{src_label}\033[0m"
+    r3_3 = f" Format : {codec} • {sr}"
+    buf.append(f"│{pad_cell(r3_1, w_left)}│{pad_cell(r3_2, w_mid)}│{pad_cell(r3_3, w_right)}│")
+
+    # Row 4
+    r4_1 = " \033[1;35m[p]\033[0m Kişisel Çalma Listeleri"
+    p_bar = render_progress_bar(pos, length, max(8, w_mid - 24))
+    r4_2 = f" {p_bar}"
+    r4_3 = f" Kalite : {'LOSSLESS FLAC' if is_lossless else 'SPOTIFY PREMIUM'}"
+    buf.append(f"│{pad_cell(r4_1, w_left)}│{pad_cell(r4_2, w_mid)}│{pad_cell(r4_3, w_right)}│")
+
+    # Row 5
+    r5_1 = " \033[1;36m[5]\033[0m Hesap & Üyelik Girişi"
+    r5_2 = f" \033[1;36m{wave1[:w_mid-4]}\033[0m"
+    r5_3 = f" Oturum : ozdil (Premium)"
+    buf.append(f"│{pad_cell(r5_1, w_left)}│{pad_cell(r5_2, w_mid)}│{pad_cell(r5_3, w_right)}│")
+
+    # Row 6
+    r6_1 = " \033[1;37m[f]\033[0m Şarkı / Sanatçı Ara"
+    r6_2 = f" \033[1;35m{wave2[:w_mid-4]}\033[0m"
+    r6_3 = f" {render_volume_bar(vol, 10)}"
+    buf.append(f"│{pad_cell(r6_1, w_left)}│{pad_cell(r6_2, w_mid)}│{pad_cell(r6_3, w_right)}│")
+
+    # Divider
+    buf.append("\033[1;35m├" + ("─" * w_left) + "┼" + ("─" * w_mid) + "┼" + ("─" * w_right) + "┤\033[0m")
+
+    # Footer Controls
+    c1_f = " [Space] Oynat/Dur  [q] Cikis"
+    c2_f = " [+/-] Ses Ayarla (%5)   [x] Durdur"
+    c3_f = " • Equalizer: Flat / Hi-Res"
+    buf.append(f"│{pad_cell(c1_f, w_left)}│{pad_cell(c2_f, w_mid)}│{pad_cell(c3_f, w_right)}│")
+
+    buf.append("\033[1;35m└" + ("─" * w_left) + "┴" + ("─" * w_mid) + "┴" + ("─" * w_right) + "┘\033[0m")
+    return "\n".join(buf) + "\n"
+
 def main():
     wave_frames = [
-        " ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı ",
-        " ıl.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı ",
-        " ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lı ",
-        " llı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ıl ",
-        " lı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı. "
+        " ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı ",
+        " ıl.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı ",
+        " ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıl ",
+        " llı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllıl ",
+        " lı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı.lıllılı.ıllı.ılı "
     ]
     frame_idx = 0
 
@@ -346,81 +532,17 @@ def main():
     try:
         while True:
             data = get_playback_metrics()
+            auth = get_auth_data()
             cols, lines = shutil.get_terminal_size((80, 24))
-            
-            W = min(max(40, cols - 2), 68)
-            inner_w = W - 4
 
-            status = data.get("status", "STOPPED")
-            is_playing = (status == "PLAYING")
-            title = data.get("title", "Müzik Çalmıyor")
-            artist = data.get("artist", "")
-            raw_src = data.get("source_name", "OmaPlayer")
-            src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
-            quality = data.get("quality_label", "Standart")
-            is_lossless = data.get("is_lossless", False)
-
-            pos = data.get("position_sec", 0)
-            length = data.get("length_sec", 0)
-            vol = data.get("volume_pct", 85)
-
-            track_full = f"{title} • {artist}" if artist else title
-            if is_playing:
-                st_badge = "\033[1;32m▶ CALIYOR\033[0m"
-                wave = wave_frames[frame_idx % len(wave_frames)]
-            elif status == "PAUSED":
-                st_badge = "\033[1;33m⏸ DURDU\033[0m"
-                wave = " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ "
+            if cols >= 92 and lines >= 18:
+                # Full Screen Pro Studio Mode (Super + F)
+                output = render_fullscreen_view(data, auth, wave_frames, frame_idx, cols)
             else:
-                st_badge = "\033[0;90m■ KAPALI\033[0m"
-                wave = " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ "
+                # Compact / Mini Card Mode
+                output = render_compact_view(data, auth, wave_frames, frame_idx, cols)
 
-            buf = []
-            buf.append("\033[H\033[J")
-            buf.append("\033[1;36m" + "┌" + ("─" * (inner_w + 2)) + "┐" + "\033[0m")
-
-            # Header
-            h_left = "  \033[1;37mOMAPLAYER\033[0m"
-            h_right = f"[{src_label[:12]}]"
-            spaces = max(1, inner_w - len(strip_ansi(h_left)) - len(h_right) - 2)
-            buf.append(make_row(h_left + (" " * spaces) + f"\033[0;90m{h_right}\033[0m", inner_w))
-            buf.append("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
-
-            # Track Info
-            buf.append(make_row("", inner_w))
-            t_styled = f"  \033[1;32m{track_full[:inner_w-4]}\033[0m"
-            buf.append(make_row(t_styled, inner_w))
-
-            # Quality & Format (Strictly ASCII single-cell)
-            q_color = "\033[1;35m" if is_lossless else "\033[1;33m"
-            q_clean = strip_ansi(quality)
-            q_styled = f"  {q_color}{q_clean[:inner_w-4]}\033[0m"
-            buf.append(make_row(q_styled, inner_w))
-
-            # Progress
-            p_bar = render_progress_bar(pos, length, max(8, inner_w - 28))
-            p_styled = f"  {st_badge} {p_bar}"
-            buf.append(make_row(p_styled, inner_w))
-
-            # Wave
-            buf.append(make_row("", inner_w))
-            w_styled = f"  \033[1;36m{wave[:inner_w-4]}\033[0m"
-            buf.append(make_row(w_styled, inner_w))
-            buf.append(make_row("", inner_w))
-
-            # Divider
-            buf.append("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
-
-            # Footer
-            f1 = "  \033[1;32m1\033[0m:Spotify \033[1;31m2\033[0m:YT \033[1;33m3\033[0m:Radyo \033[1;35mp\033[0m:Listeler \033[1;36m5\033[0m:Hesap \033[1;37mf\033[0m:Ara"
-            buf.append(make_row(f1, inner_w))
-
-            f2 = "  \033[1;37mSpace\033[0m:Oynat/Dur   \033[1;37m+/-\033[0m:Ses   \033[1;31mx\033[0m:Durdur   \033[1;31mq\033[0m:Cikis"
-            buf.append(make_row(f2, inner_w))
-
-            buf.append("\033[1;36m" + "└" + ("─" * (inner_w + 2)) + "┘" + "\033[0m")
-
-            sys.stdout.write("\n".join(buf) + "\n")
+            sys.stdout.write(output)
             sys.stdout.flush()
 
             frame_idx += 1
