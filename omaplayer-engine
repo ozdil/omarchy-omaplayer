@@ -8,9 +8,9 @@ import argparse
 import time
 import socket
 
+AUTH_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/auth.json")
 STATE_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/state.json")
 SOCKET_PATH = "/tmp/omaplayer_mpv.sock"
-os.makedirs(os.path.dirname(STATE_FILE), mode=0o700, exist_ok=True)
 
 RADIO_STREAMS = {
     "lofi": {
@@ -43,6 +43,23 @@ RADIO_STREAMS = {
 def sanitize_str(s, max_len=60):
     return re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(s))[:max_len].strip()
 
+def get_auth_data():
+    try:
+        if os.path.isfile(AUTH_FILE):
+            with open(AUTH_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"spotify_user": "", "spotify_premium": False, "yt_cookies": False, "qobuz_user": ""}
+
+def save_auth_data(data):
+    try:
+        with open(AUTH_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.chmod(AUTH_FILE, 0o600)
+    except Exception:
+        pass
+
 def get_saved_state():
     try:
         if os.path.isfile(STATE_FILE):
@@ -50,7 +67,7 @@ def get_saved_state():
                 return json.load(f)
     except Exception:
         pass
-    return {"active_source": "radio", "current_title": "", "current_artist": "", "current_genre": "Müzik"}
+    return {"active_source": "spotify", "current_title": "", "current_artist": "", "current_genre": "Müzik"}
 
 def save_state(state):
     try:
@@ -91,7 +108,6 @@ def ensure_mpv_running():
         except Exception:
             pass
 
-    # Spawn background headless mpv daemon
     proc = subprocess.Popen(
         [
             "/usr/bin/mpv",
@@ -118,7 +134,7 @@ def play_terminal_stream(url, title=None, artist=None, source_type="streaming"):
     save_state(state)
     return True
 
-def play_query_stream(query):
+def play_query_stream(query, source_type="youtube"):
     ensure_mpv_running()
     clean_q = sanitize_str(query, 50)
     if not clean_q:
@@ -126,13 +142,13 @@ def play_query_stream(query):
     ytdl_url = f"ytdl://ytsearch1:{clean_q}"
     send_mpv_command(["loadfile", ytdl_url, "replace"])
     state = get_saved_state()
-    state["active_source"] = "youtube"
+    state["active_source"] = source_type
     state["current_title"] = clean_q
-    state["current_artist"] = "YouTube Music CLI"
+    state["current_artist"] = "YouTube Music CLI" if source_type == "youtube" else "Spotify CLI"
     save_state(state)
     return True
 
-def get_mpris_status():
+def get_spotify_mpris():
     try:
         res = subprocess.run(
             ["/usr/bin/busctl", "--user", "list"],
@@ -140,7 +156,7 @@ def get_mpris_status():
             env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
         )
         for line in res.stdout.splitlines():
-            if "org.mpris.MediaPlayer2" in line and "mpv" not in line:
+            if "org.mpris.MediaPlayer2" in line and ("spotify" in line.lower() or "ncspot" in line.lower()):
                 m = re.search(r'(org\.mpris\.MediaPlayer2\.[a-zA-Z0-9_.-]+)', line)
                 if m:
                     service = m.group(1)
@@ -150,12 +166,15 @@ def get_mpris_status():
                         capture_output=True, text=True, timeout=0.6, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
                     )
                     title = "Bilinmeyen Şarkı"
-                    artist = "MPRIS"
+                    artist = "Spotify"
+                    album = ""
                     if meta_res.returncode == 0:
                         m_t = re.search(r'"xesam:title"\s+s\s+"([^"]+)"', meta_res.stdout)
                         if m_t: title = m_t.group(1)
                         m_a = re.search(r'"xesam:artist"\s+(?:as\s+\d+\s+|s\s+)"([^"]+)"', meta_res.stdout)
                         if m_a: artist = m_a.group(1)
+                        m_alb = re.search(r'"xesam:album"\s+s\s+"([^"]+)"', meta_res.stdout)
+                        if m_alb: album = m_alb.group(1)
 
                     st_res = subprocess.run(
                         ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"],
@@ -165,11 +184,11 @@ def get_mpris_status():
                     return {
                         "status": status,
                         "is_running": True,
-                        "source": "mpris",
-                        "source_name": "󰓇 Spotify / MPRIS",
+                        "source": "spotify",
+                        "source_name": "󰓇 Spotify Premium",
                         "title": sanitize_str(title, 40),
                         "artist": sanitize_str(artist, 35),
-                        "album": "",
+                        "album": sanitize_str(album, 35),
                         "position_sec": 0,
                         "length_sec": 0,
                         "volume_pct": 85,
@@ -180,7 +199,12 @@ def get_mpris_status():
     return None
 
 def get_playback_info():
-    # 1. Check native terminal MPV engine
+    # 1. Check Spotify MPRIS first if active
+    sp_data = get_spotify_mpris()
+    if sp_data and sp_data.get("status") == "PLAYING":
+        return sp_data
+
+    # 2. Check native terminal MPV engine
     if os.path.exists(SOCKET_PATH):
         idle = send_mpv_command(["get_property", "idle-active"])
         if idle is False:
@@ -193,19 +217,20 @@ def get_playback_info():
             state = get_saved_state()
             source = state.get("active_source", "terminal")
             source_labels = {
+                "spotify": "󰓇 Spotify CLI",
+                "youtube": "󰗃 YouTube Music",
+                "qobuz": "🎵 Qobuz Hi-Res",
                 "radio": "📻 Canlı İnternet Radyosu",
-                "youtube": "󰗃 YouTube Music (CLI)",
-                "local": "📁 Yerel Müzik Arşivi",
-                "spotify": "󰓇 Spotify CLI"
+                "local": "📁 Yerel Müzik Arşivi"
             }
 
             return {
                 "status": "PAUSED" if paused else "PLAYING",
                 "is_running": True,
                 "source": source,
-                "source_name": source_labels.get(source, "🎵 Terminal Çalar"),
+                "source_name": source_labels.get(source, "🎵 OmaPlayer"),
                 "title": sanitize_str(state.get("current_title") or media_title, 40),
-                "artist": sanitize_str(state.get("current_artist") or "CLI Stream", 35),
+                "artist": sanitize_str(state.get("current_artist") or "Terminal Akış", 35),
                 "album": "OmaPlayer Native Engine",
                 "position_sec": int(pos) if isinstance(pos, (int, float)) else 0,
                 "length_sec": int(dur) if isinstance(dur, (int, float)) else 0,
@@ -213,19 +238,19 @@ def get_playback_info():
                 "service": "OmaPlayer MPV Daemon"
             }
 
-    # 2. Check external MPRIS (Spotify etc.)
-    mpris_data = get_mpris_status()
-    if mpris_data:
-        return mpris_data
+    if sp_data:
+        return sp_data
 
     state = get_saved_state()
+    auth = get_auth_data()
+    user_badge = auth.get("spotify_user") or "Misafir"
     return {
         "status": "STOPPED",
         "is_running": False,
-        "source": state.get("active_source", "radio"),
+        "source": state.get("active_source", "spotify"),
         "source_name": "🎵 OmaPlayer",
         "title": "Müzik Çalmıyor",
-        "artist": "CLI Çalar Hazır",
+        "artist": f"Hesap: {user_badge}",
         "album": "",
         "position_sec": 0,
         "length_sec": 0,
@@ -234,7 +259,7 @@ def get_playback_info():
     }
 
 def control_playback(action):
-    # If MPV is running, control via IPC
+    # If MPV is active, control via IPC
     if os.path.exists(SOCKET_PATH):
         if action == "play_pause":
             send_mpv_command(["cycle", "pause"])
@@ -249,10 +274,10 @@ def control_playback(action):
             send_mpv_command(["stop"])
             return True
 
-    # Fallback to MPRIS
-    mpris_data = get_mpris_status()
-    if mpris_data and mpris_data.get("service"):
-        srv = mpris_data["service"]
+    # Fallback to Spotify MPRIS
+    sp_data = get_spotify_mpris()
+    if sp_data and sp_data.get("service"):
+        srv = sp_data["service"]
         if action == "play_pause":
             subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlayPause"], capture_output=True)
             return True
@@ -285,21 +310,21 @@ def list_local_music():
     return tracks
 
 def main():
-    parser = argparse.ArgumentParser(description="OmaPlayer CLI Native Audio Engine")
+    parser = argparse.ArgumentParser(description="OmaPlayer Universal Multi-Platform Engine")
     parser.add_argument("--json", action="store_true", help="Output JSON status")
     parser.add_argument("--play-pause", action="store_true", help="Toggle play/pause")
     parser.add_argument("--stop", action="store_true", help="Stop playback")
     parser.add_argument("--vol-up", action="store_true", help="Volume up 5 percent")
     parser.add_argument("--vol-down", action="store_true", help="Volume down 5 percent")
-    parser.add_argument("--search", type=str, help="Search and stream track via terminal CLI")
-    parser.add_argument("--play-radio", type=str, help="Play radio station (lofi, jazz, synthwave, rock, trt)")
+    parser.add_argument("--search", type=str, help="Search and stream track")
+    parser.add_argument("--play-radio", type=str, help="Play radio station")
     parser.add_argument("--play-file", type=str, help="Play local audio file")
-    parser.add_argument("--list-local", action="store_true", help="List ~/Music audio files")
+    parser.add_argument("--list-local", action="store_true", help="List local music")
 
     args = parser.parse_args()
 
     if args.search:
-        play_query_stream(args.search)
+        play_query_stream(args.search, "spotify")
     elif args.play_radio:
         st = RADIO_STREAMS.get(args.play_radio, RADIO_STREAMS["lofi"])
         play_terminal_stream(st["url"], st["name"], st["genre"], "radio")
