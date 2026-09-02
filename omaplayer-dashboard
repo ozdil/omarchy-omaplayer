@@ -426,7 +426,7 @@ def render_compact_view(data, auth, wave_frames, frame_idx, cols):
 # ==============================================================================
 def render_fullscreen_view(data, auth, wave_frames, frame_idx, cols):
     W = min(cols - 2, 124)
-    w_left = 28
+    w_left = 30
     w_right = 32
     w_mid = W - w_left - w_right - 4
 
