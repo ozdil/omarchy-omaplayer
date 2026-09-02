@@ -90,9 +90,7 @@ def render_progress_bar(pos, length, width=20):
     return f"[{bar[:width]}] {format_time(pos)} / {format_time(length)}"
 
 def strip_ansi(s):
-    # Remove ANSI and wide unicode non-ascii symbols for strict column width math
-    clean = re.sub(r'\x1b\[[0-9;]*m', '', str(s))
-    return clean
+    return re.sub(r'\x1b\[[0-9;]*m', '', str(s))
 
 def make_row(content, width):
     clean = strip_ansi(content)
@@ -114,6 +112,41 @@ def search_dialog():
             print(f"\n  \033[1;32m'{q}' aranıyor ve başlatılıyor...\033[0m")
             run_action(["--search", q])
             time.sleep(1.0)
+    except Exception:
+        pass
+
+def playlists_dialog():
+    os.system("clear")
+    print("\033[1;35m┌──────────────────────────────────────────────────────────┐\033[0m")
+    print("│  📂 \033[1;37mKİŞİSEL ÇALMA LİSTELERİ & ARŞİV\033[0m                      │")
+    print("\033[1;35m├──────────────────────────────────────────────────────────┤\033[0m")
+    print("│  \033[1;32m[1]\033[0m ⭐ Beğenilen Şarkılarım (Favoriler & Liked Songs)   │")
+    print("│  \033[1;36m[2]\033[0m 🔥 Haftalık Keşif Listesi (Discover Weekly)         │")
+    print("│  \033[1;33m[3]\033[0m 🇹🇷 Türkçe Pop, Rap & Alternatif Hitleri              │")
+    print("│  \033[1;34m[4]\033[0m ☕ Lofi & Kodlama Odaklanma Miksi                     │")
+    print("│  \033[1;35m[5]\033[0m 🌆 Synthwave / Retrowave Cyberpunk Arşivi           │")
+    print("│  \033[1;31m[6]\033[0m 🎸 Efsane Classic Rock Klasikleri                     │")
+    print("│  \033[1;37m[7]\033[0m 🎻 Klasik Müzik & Piyano Konsantrasyon              │")
+    print("│  \033[1;32m[8]\033[0m 📁 ~/Music Klasörümdeki Yerel Çalma Listeleri (.m3u)│")
+    print("\033[1;35m└──────────────────────────────────────────────────────────┘\033[0m\n")
+    try:
+        c = input("  Çalmak İstediğiniz Liste [1-8]: ").strip()
+        p_map = {
+            "1": "Liked Songs Top Hits",
+            "2": "Discover Weekly Mix",
+            "3": "Turkce Pop Rap Hitleri",
+            "4": "Lofi Beats Coding Mix",
+            "5": "Synthwave Cyberpunk Mix",
+            "6": "Classic Rock Greatest Hits",
+            "7": "Chopin & Classical Piano Masterpieces"
+        }
+        if c in p_map:
+            print(f"\n  \033[1;32m'{p_map[c]}' çalma listesi başlatılıyor...\033[0m")
+            run_action(["--search", p_map[c]])
+            time.sleep(1.0)
+        elif c == "8":
+            run_action(["--list-local"])
+            time.sleep(0.5)
     except Exception:
         pass
 
@@ -188,7 +221,6 @@ def main():
         data = get_engine_data()
         cols, lines = shutil.get_terminal_size((80, 24))
         
-        # Exact width fitting the terminal with safe padding
         W = min(max(40, cols - 2), 68)
         inner_w = W - 4
 
@@ -197,7 +229,6 @@ def main():
         title = data.get("title", "Müzik Çalmıyor")
         artist = data.get("artist", "")
         raw_src = data.get("source_name", "OmaPlayer")
-        # Clean source label for ASCII math
         src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
 
         pos = data.get("position_sec", 0)
@@ -247,8 +278,8 @@ def main():
         # Divider
         print("\033[1;36m" + "├" + ("─" * (inner_w + 2)) + "┤" + "\033[0m")
 
-        # Clean Shortcuts Footer
-        f1 = "  \033[1;32m1\033[0m:Spotify  \033[1;31m2\033[0m:YT  \033[1;33m3\033[0m:Radyo  \033[1;35m4\033[0m:Yerel  \033[1;36m5\033[0m:Hesap  \033[1;37mf\033[0m:Ara"
+        # Clean Shortcuts Footer with Playlists [p]
+        f1 = "  \033[1;32m1\033[0m:Spotify \033[1;31m2\033[0m:YT \033[1;33m3\033[0m:Radyo \033[1;35mp\033[0m:Listeler \033[1;36m5\033[0m:Hesap \033[1;37mf\033[0m:Ara"
         print(make_row(f1, inner_w))
 
         f2 = "  \033[1;37mSpace\033[0m:Oynat/Dur   \033[1;37m+/-\033[0m:Ses   \033[1;31mx\033[0m:Durdur   \033[1;31mq\033[0m:Cikis"
@@ -266,6 +297,8 @@ def main():
             run_action(["--play-pause"])
         elif key in ('f', 'F'):
             search_dialog()
+        elif key in ('p', 'P', '4'):
+            playlists_dialog()
         elif key in ('+', '=', 'UP'):
             run_action(["--vol-up"])
         elif key in ('-', '_', 'DOWN'):
@@ -278,10 +311,6 @@ def main():
             search_dialog()
         elif key == '3':
             radio_dialog()
-        elif key == '4':
-            print("\n  Yerel Müzik taranıyor...")
-            run_action(["--list-local"])
-            time.sleep(0.5)
         elif key == '5':
             account_dialog()
 
