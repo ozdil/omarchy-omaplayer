@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "ozdil.omaplayer",
+  "name": "OmaPlayer",
+  "version": "1.0.0",
+  "author": "Ozan Özdil (ozdil)",
+  "license": "MIT",
+  "description": "Universal multi-source music player and internet radio studio supporting Spotify, YouTube Music, Qobuz, and live streams.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaPlayer",
+    "description": "Multi-source music player and internet radio controller.",
+    "category": "System",
+    "defaultSection": "right",
+    "aliases": ["player", "music", "spotify", "ytmusic", "qobuz", "radio", "omaplayer"],
+    "allowMultiple": false
+  }
+}

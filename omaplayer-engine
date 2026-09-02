@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+import subprocess
+import json
+import re
+import sys
+import os
+import argparse
+import time
+
+STATE_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/state.json")
+os.makedirs(os.path.dirname(STATE_FILE), mode=0o700, exist_ok=True)
+
+RADIO_STREAMS = {
+    "lofi": {
+        "name": "☕ Lofi Beats (Sakin / Kodlama)",
+        "url": "https://stream.zeno.fm/f3wvbbqmdg8uv",
+        "genre": "Lofi & Chill"
+    },
+    "jazz": {
+        "name": "🎷 Jazz Radio Classics",
+        "url": "https://jazz-wr01.ice.infomaniak.ch/jazz-wr01-128.mp3",
+        "genre": "Jazz & Soul"
+    },
+    "synthwave": {
+        "name": "🌆 Nightwave Plaza (Synthwave)",
+        "url": "https://plaza.one/mp3",
+        "genre": "Synthwave & Retrowave"
+    },
+    "rock": {
+        "name": "🎸 Classic Rock Radio",
+        "url": "https://ais-sa2.cdnstream1.com/1988_128.mp3",
+        "genre": "Rock & Metal"
+    },
+    "trt": {
+        "name": "📻 TRT Radyo 3 (Klasik & Caz)",
+        "url": "https://radio-trtradyo3.live.trt.com.tr/master.m3u8",
+        "genre": "Classical & World"
+    }
+}
+
+def sanitize_str(s, max_len=60):
+    return re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(s))[:max_len].strip()
+
+def get_saved_state():
+    try:
+        if os.path.isfile(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"active_source": "spotify", "radio_station": "lofi"}
+
+def save_state(state):
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
+def get_mpris_players():
+    try:
+        res = subprocess.run(
+            ["/usr/bin/busctl", "--user", "list"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+        )
+        players = []
+        for line in res.stdout.splitlines():
+            if "org.mpris.MediaPlayer2" in line:
+                match = re.search(r'(org\.mpris\.MediaPlayer2\.[a-zA-Z0-9_.-]+)', line)
+                if match:
+                    players.append(match.group(1))
+        return players
+    except Exception:
+        return []
+
+def get_active_mpris_service(preferred_source="spotify"):
+    players = get_mpris_players()
+    if not players:
+        return None
+
+    # Source matching
+    keywords = {
+        "spotify": ["spotify", "spotifyd", "ncspot"],
+        "ytmusic": ["chromium", "firefox", "brave", "youtube", "music"],
+        "qobuz": ["qobuz", "strawberry", "audacious"],
+        "tidal": ["tidal", "cider"],
+        "radio": ["mpv", "omaplayer"],
+        "local": ["mpv", "vlc", "rhythmbox"]
+    }
+
+    target_keys = keywords.get(preferred_source, [])
+    for p in players:
+        for k in target_keys:
+            if k in p.lower():
+                return p
+
+    return players[0]
+
+def get_playback_info():
+    state = get_saved_state()
+    source = state.get("active_source", "spotify")
+
+    # Check MPV radio process first if radio mode is active
+    radio_playing = False
+    try:
+        res = subprocess.run(["pgrep", "-f", "mpv.*omaplayer_radio"], capture_output=True)
+        radio_playing = (res.returncode == 0)
+    except Exception:
+        pass
+
+    if source == "radio" and radio_playing:
+        st_key = state.get("radio_station", "lofi")
+        st_info = RADIO_STREAMS.get(st_key, RADIO_STREAMS["lofi"])
+        return {
+            "status": "PLAYING",
+            "is_running": True,
+            "source": "radio",
+            "source_name": "📻 Canlı İnternet Radyosu",
+            "title": st_info["name"],
+            "artist": st_info["genre"],
+            "album": "Canlı Yayın",
+            "position_sec": 0,
+            "length_sec": 0,
+            "volume_pct": 85,
+            "service": "MPV Radio"
+        }
+
+    # Query MPRIS
+    service = get_active_mpris_service(source)
+    if not service:
+        source_labels = {
+            "spotify": "󰓇 Spotify",
+            "ytmusic": "󰗃 YouTube Music",
+            "qobuz": "🎵 Qobuz (Hi-Res)",
+            "tidal": "🌊 Tidal / Deezer",
+            "radio": "📻 İnternet Radyosu",
+            "local": "📁 Yerel Müzik Arşivi"
+        }
+        return {
+            "status": "STOPPED",
+            "is_running": False,
+            "source": source,
+            "source_name": source_labels.get(source, source.title()),
+            "title": "Müzik Çalmıyor",
+            "artist": f"{source_labels.get(source, 'Oynatıcı')} Kapalı",
+            "album": "",
+            "position_sec": 0,
+            "length_sec": 0,
+            "volume_pct": 0,
+            "service": "None"
+        }
+
+    # PlaybackStatus
+    status = "UNKNOWN"
+    try:
+        res = subprocess.run(
+            ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"],
+            capture_output=True, text=True, timeout=0.8, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+        )
+        if res.returncode == 0:
+            m = re.search(r's\s+"([^"]+)"', res.stdout)
+            if m:
+                status = m.group(1).upper()
+    except Exception:
+        pass
+
+    # Metadata
+    title = "Bilinmeyen Şarkı"
+    artist = "Bilinmeyen Sanatçı"
+    album = ""
+    length_sec = 0
+
+    try:
+        res = subprocess.run(
+            ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Metadata"],
+            capture_output=True, text=True, timeout=0.8, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+        )
+        if res.returncode == 0:
+            out = res.stdout
+            m_title = re.search(r'"xesam:title"\s+s\s+"([^"]+)"', out)
+            if m_title:
+                title = m_title.group(1)
+            
+            m_artist = re.search(r'"xesam:artist"\s+as\s+\d+\s+"([^"]+)"', out) or re.search(r'"xesam:artist"\s+s\s+"([^"]+)"', out)
+            if m_artist:
+                artist = m_artist.group(1)
+            
+            m_album = re.search(r'"xesam:album"\s+s\s+"([^"]+)"', out)
+            if m_album:
+                album = m_album.group(1)
+
+            m_len = re.search(r'"mpris:length"\s+(?:x|t|u)\s+(\d+)', out)
+            if m_len:
+                length_sec = int(m_len.group(1)) // 1000000
+    except Exception:
+        pass
+
+    # Position
+    pos_sec = 0
+    try:
+        res = subprocess.run(
+            ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Position"],
+            capture_output=True, text=True, timeout=0.8, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+        )
+        if res.returncode == 0:
+            m_pos = re.search(r'(?:x|t|u)\s+(\d+)', res.stdout)
+            if m_pos:
+                pos_sec = int(m_pos.group(1)) // 1000000
+    except Exception:
+        pass
+
+    # Volume
+    volume_pct = 80
+    try:
+        res = subprocess.run(
+            ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Volume"],
+            capture_output=True, text=True, timeout=0.8, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+        )
+        if res.returncode == 0:
+            m_vol = re.search(r'd\s+([0-9.]+)', res.stdout)
+            if m_vol:
+                volume_pct = int(float(m_vol.group(1)) * 100)
+    except Exception:
+        pass
+
+    source_labels = {
+        "spotify": "󰓇 Spotify",
+        "ytmusic": "󰗃 YouTube Music",
+        "qobuz": "🎵 Qobuz (Hi-Res)",
+        "tidal": "🌊 Tidal / Deezer",
+        "radio": "📻 İnternet Radyosu",
+        "local": "📁 Yerel Müzik"
+    }
+
+    return {
+        "status": status,
+        "is_running": True,
+        "source": source,
+        "source_name": source_labels.get(source, source.title()),
+        "title": sanitize_str(title, 40),
+        "artist": sanitize_str(artist, 35),
+        "album": sanitize_str(album, 35),
+        "position_sec": pos_sec,
+        "length_sec": length_sec,
+        "volume_pct": volume_pct,
+        "service": service
+    }
+
+def play_radio(station_key):
+    st = RADIO_STREAMS.get(station_key, RADIO_STREAMS["lofi"])
+    # Stop existing radio
+    stop_radio()
+    # Spawn mpv
+    subprocess.Popen(
+        ["/usr/bin/mpv", "--no-video", "--title=omaplayer_radio", st["url"]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    state = get_saved_state()
+    state["active_source"] = "radio"
+    state["radio_station"] = station_key
+    save_state(state)
+    return True
+
+def stop_radio():
+    subprocess.run(["pkill", "-f", "mpv.*omaplayer_radio"], capture_output=True)
+
+def control_action(action):
+    state = get_saved_state()
+    source = state.get("active_source", "spotify")
+
+    if source == "radio":
+        if action == "play_pause":
+            # Toggle radio
+            res = subprocess.run(["pgrep", "-f", "mpv.*omaplayer_radio"], capture_output=True)
+            if res.returncode == 0:
+                stop_radio()
+            else:
+                play_radio(state.get("radio_station", "lofi"))
+            return True
+        elif action == "next":
+            # Switch to next station
+            keys = list(RADIO_STREAMS.keys())
+            cur_st = state.get("radio_station", "lofi")
+            idx = (keys.index(cur_st) + 1) % len(keys) if cur_st in keys else 0
+            play_radio(keys[idx])
+            return True
+        elif action == "prev":
+            keys = list(RADIO_STREAMS.keys())
+            cur_st = state.get("radio_station", "lofi")
+            idx = (keys.index(cur_st) - 1) % len(keys) if cur_st in keys else 0
+            play_radio(keys[idx])
+            return True
+
+    # Standard MPRIS control
+    service = get_active_mpris_service(source)
+    if not service:
+        if action == "launch":
+            launch_source(source)
+            return True
+        return False
+
+    methods = {
+        "play_pause": "PlayPause",
+        "play": "Play",
+        "pause": "Pause",
+        "next": "Next",
+        "prev": "Previous"
+    }
+
+    if action in methods:
+        method = methods[action]
+        try:
+            subprocess.run(
+                ["/usr/bin/busctl", "--user", "call", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", method],
+                capture_output=True, timeout=1.0, check=False, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+            )
+            return True
+        except Exception:
+            return False
+
+    elif action in ("vol_up", "vol_down"):
+        info = get_playback_info()
+        cur_vol = info.get("volume_pct", 80) / 100.0
+        new_vol = min(1.0, cur_vol + 0.05) if action == "vol_up" else max(0.0, cur_vol - 0.05)
+        try:
+            subprocess.run(
+                ["/usr/bin/busctl", "--user", "set-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Volume", "d", str(new_vol)],
+                capture_output=True, timeout=1.0, check=False, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+            )
+            return True
+        except Exception:
+            return False
+
+    return False
+
+def launch_source(source):
+    if source == "spotify":
+        for b in ["/usr/bin/spotify-launcher", "/usr/bin/spotify"]:
+            if os.path.exists(b):
+                subprocess.Popen([b], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+    elif source == "ytmusic":
+        subprocess.Popen(["xdg-open", "https://music.youtube.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    elif source == "qobuz":
+        subprocess.Popen(["xdg-open", "https://play.qobuz.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    elif source == "radio":
+        play_radio("lofi")
+        return True
+    return False
+
+def main():
+    parser = argparse.ArgumentParser(description="OmaPlayer Engine")
+    parser.add_argument("--json", action="store_true", help="Output JSON status")
+    parser.add_argument("--play-pause", action="store_true", help="Toggle play/pause")
+    parser.add_argument("--next", action="store_true", help="Next track or radio station")
+    parser.add_argument("--prev", action="store_true", help="Previous track or radio station")
+    parser.add_argument("--vol-up", action="store_true", help="Volume up 5 percent")
+    parser.add_argument("--vol-down", action="store_true", help="Volume down 5 percent")
+    parser.add_argument("--set-source", type=str, help="Set active platform (spotify, ytmusic, qobuz, radio, local)")
+    parser.add_argument("--play-radio", type=str, help="Play specific radio (lofi, jazz, synthwave, rock, trt)")
+    parser.add_argument("--launch", action="store_true", help="Launch active platform client")
+
+    args = parser.parse_args()
+
+    if args.set_source:
+        state = get_saved_state()
+        state["active_source"] = args.set_source
+        save_state(state)
+        if args.set_source == "radio":
+            play_radio("lofi")
+        else:
+            stop_radio()
+
+    elif args.play_radio:
+        play_radio(args.play_radio)
+
+    elif args.play_pause:
+        control_action("play_pause")
+    elif args.next:
+        control_action("next")
+    elif args.prev:
+        control_action("prev")
+    elif args.vol_up:
+        control_action("vol_up")
+    elif args.vol_down:
+        control_action("vol_down")
+    elif args.launch:
+        state = get_saved_state()
+        launch_source(state.get("active_source", "spotify"))
+
+    info = get_playback_info()
+    print(json.dumps(info))
+
+if __name__ == "__main__":
+    main()

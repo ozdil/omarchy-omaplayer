@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+import subprocess
+import json
+import os
+import sys
+
+def main():
+    plugin_dir = os.path.dirname(os.path.realpath(__file__))
+    engine_path = os.path.join(plugin_dir, "omaplayer-engine")
+
+    try:
+        res = subprocess.run([engine_path, "--json"], capture_output=True, text=True, timeout=1.5)
+        data = json.loads(res.stdout) if res.returncode == 0 else {}
+    except Exception:
+        data = {}
+
+    status = data.get("status", "STOPPED")
+    source_name = data.get("source_name", "OmaPlayer")
+    title = data.get("title", "Müzik Çalmıyor")
+    artist = data.get("artist", "")
+    is_running = data.get("is_running", False)
+
+    if not is_running:
+        text = f"󰎆 {source_name}"
+        css = "normal"
+        tooltip = f"🎵 OmaPlayer • Evrensel Müzik Stüdyosu\n• Aktif Kaynak: {source_name}\n• Durum: Çalmıyor\n\n[Sol Tık] Oynatıcıyı / Radyoyu Aç"
+    elif status == "PLAYING":
+        track_str = f"{title} • {artist}" if artist else title
+        text = f"󰎆 {track_str[:26]}"
+        css = "active"
+        tooltip = f"🎵 OmaPlayer • Çalıyor ({source_name})\n• Parça: {title}\n• Sanatçı: {artist}\n• Albüm: {data.get('album', '')}\n• Ses: %{data.get('volume_pct', 85)}\n\n[Sol Tık] CLI Müzik Merkezini Aç"
+    elif status == "PAUSED":
+        text = f"󰎆 Duraklatıldı: {title[:18]}"
+        css = "normal"
+        tooltip = f"🎵 OmaPlayer • Duraklatıldı ({source_name})\n• Parça: {title}\n• Sanatçı: {artist}\n\n[Sol Tık] CLI Müzik Merkezini Aç"
+    else:
+        text = "󰎆 OmaPlayer"
+        css = "normal"
+        tooltip = "🎵 OmaPlayer • Evrensel Müzik Çalar"
+
+    print(json.dumps({"text": text, "tooltip": tooltip, "class": css}))
+
+if __name__ == "__main__":
+    main()
