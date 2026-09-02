@@ -36,7 +36,7 @@ def get_key():
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        r, _, _ = select.select([sys.stdin], [], [], 0.5)
+        r, _, _ = select.select([sys.stdin], [], [], 0.35)
         if not r:
             return 'REFRESH'
         ch = sys.stdin.read(1)
@@ -78,299 +78,190 @@ def format_time(seconds):
     s = seconds % 60
     return f"{m:02d}:{s:02d}"
 
-def render_progress_bar(pos, length, width=32):
+def render_progress_bar(pos, length, width=22):
     if length <= 0:
-        return f"[{'░' * width}] Canlı Yayın / Doğrudan Akış"
+        return f"[{'░' * width}] Canlı Yayın"
     ratio = min(1.0, max(0.0, pos / length))
     filled = int(ratio * width)
     bar = "█" * filled + "░" * (width - filled)
-    return f"[{bar}] {format_time(pos)} / {format_time(length)}"
+    return f"[{bar}] {format_time(pos)}/{format_time(length)}"
 
-def render_volume_bar(vol, width=12):
+def render_volume_bar(vol, width=10):
     ratio = min(1.0, max(0.0, vol / 100.0))
     filled = int(ratio * width)
     bar = "█" * filled + "░" * (width - filled)
     return f"🔊 %{vol:<3} [{bar}]"
 
-# ==========================================
-# 1. SPOTIFY DEDICATED CLI STUDIO
-# ==========================================
-def spotify_studio_menu():
-    while True:
-        auth = get_auth_data()
-        user = auth.get("spotify_user") or "Misafir (Oturum Açılmadı)"
-        is_prem = auth.get("spotify_premium", False)
-        prem_badge = "\033[1;32m⭐ SPOTIFY PREMIUM (320 kbps)\033[0m" if is_prem else "\033[1;33m🆓 Standart Ücretsiz\033[0m"
-
-        data = get_engine_data()
-        status = data.get("status", "STOPPED")
-        is_playing = (status == "PLAYING")
-        title = data.get("title", "Müzik Çalmıyor")
-        artist = data.get("artist", "Spotify CLI")
-
-        os.system("clear")
-        print("\033[1;32m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-        print("║  󰓇 \033[1;37mSPOTIFY CLI STÜDYOSU\033[0m • \033[1;32mTerminalden Doğrudan Müzik & Premium Karargahı\033[0m    ║")
-        print("\033[1;32m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-
-        print(f"  👤 \033[1;37mKullanıcı:\033[0m \033[1;36m{user}\033[0m | Durum: {prem_badge}\n")
-
-        if is_playing:
-            print(f"  ▶️  \033[1;32mÇALIYOR:\033[0m \033[1;37m{title}\033[0m • \033[0;90m{artist}\033[0m")
-            print(f"  ⏱️  {render_progress_bar(data.get('position_sec', 0), data.get('length_sec', 0))}")
-            print(f"  {render_volume_bar(data.get('volume_pct', 85))}\n")
-        else:
-            print("  ⏸️  \033[0;90mŞu anda Spotify akışı duraklatıldı veya hazır.\033[0m\n")
-
-        print("  \033[1;32m[1]\033[0m 🔍 \033[1;37mSpotify'da Şarkı / Albüm / Sanatçı Ara & Anında Çal\033[0m")
-        print("  \033[1;36m[2]\033[0m 🔑 \033[1;37mSpotify Hesabına Giriş Yap / Premium Aktifleştir\033[0m")
-        print("  \033[1;35m[3]\033[0m 📂 \033[1;37mKişisel Çalma Listelerim (Playlists)\033[0m")
-        print("  \033[1;33m[4]\033[0m 🚀 \033[1;37mSpotify Daemon / İstemcisine Bağlan\033[0m")
-        print("\n  \033[1;37m[Space]\033[0m ⏯️ Oynat/Dur | \033[1;37m[+ / -]\033[0m 🔊 Ses | \033[1;31m[b / ESC]\033[0m ⬅️ Ana Menüye Dön\n")
-        print("\033[1;32m──────────────────────────────────────────────────────────────────────────────\033[0m")
-
-        key = get_key()
-        if key in ('b', 'B', 'ESC', 'q', 'Q'):
-            break
-        elif key == ' ':
-            run_action(["--play-pause"])
-        elif key in ('+', '=', 'UP'):
-            run_action(["--vol-up"])
-        elif key in ('-', '_', 'DOWN'):
-            run_action(["--vol-down"])
-        elif key == '1':
-            print("\n  \033[1;32m--- 🔍 SPOTIFY ARAMA ---\033[0m")
-            try:
-                q = input("  🎵 Çalmak istediğiniz şarkı/sanatçı: ").strip()
-                if q:
-                    print(f"  \033[1;32m⏳ Spotify akışı terminalde başlatılıyor: '{q}'...\033[0m")
-                    run_action(["--search", q])
-                    time.sleep(1.0)
-            except Exception:
-                pass
-        elif key == '2':
-            account_login_menu()
-        elif key == '3':
-            print("\n  \033[1;35m--- 📂 ÇALMA LİSTELERİ ---\033[0m")
-            print("  1. ⭐ En Çok Dinlenenler (Top Tracks)")
-            print("  2. 🔥 Keşif Haftalığı (Discover Weekly)")
-            print("  3. 🎧 Cyberpunk & Synthwave Listesi")
-            try:
-                c = input("\n  Çalmak istediğiniz liste [1-3]: ").strip()
-                if c == "1": run_action(["--search", "Top 50 Hits"])
-                elif c == "2": run_action(["--search", "Discover Weekly Indie"])
-                elif c == "3": run_action(["--search", "Synthwave Cyberpunk Mix"])
-                time.sleep(1.0)
-            except Exception:
-                pass
-        elif key == '4':
-            print("\n  \033[1;33m✓ Spotify Connect & D-Bus MPRIS dinleyicisi aktif.\033[0m")
-            time.sleep(1.0)
-
-# ==========================================
-# 2. YOUTUBE MUSIC CLI STUDIO
-# ==========================================
-def ytmusic_studio_menu():
-    while True:
-        data = get_engine_data()
-        status = data.get("status", "STOPPED")
-        is_playing = (status == "PLAYING")
-
-        os.system("clear")
-        print("\033[1;31m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-        print("║  󰗃 \033[1;37mYOUTUBE MUSIC CLI\033[0m • \033[1;31mKesintisiz Yüksek Kaliteli Müzik Yayını\033[0m             ║")
-        print("\033[1;31m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-
-        if is_playing:
-            print(f"  ▶️  \033[1;32mÇALIYOR:\033[0m \033[1;37m{data.get('title')}\033[0m")
-            print(f"  ⏱️  {render_progress_bar(data.get('position_sec', 0), data.get('length_sec', 0))}\n")
-
-        print("  \033[1;31m[1]\033[0m 🔍 \033[1;37mŞarkı / Sanatçı Ara & Terminalde Çal (Reklamsız)\033[0m")
-        print("  \033[1;33m[2]\033[0m 🔥 \033[1;37mTrend Olan Türkçe / Yabancı Şarkılar\033[0m")
-        print("\n  \033[1;37m[Space]\033[0m ⏯️ Oynat/Dur | \033[1;37m[+ / -]\033[0m 🔊 Ses | \033[1;31m[b / ESC]\033[0m ⬅️ Ana Menüye Dön\n")
-        print("\033[1;31m──────────────────────────────────────────────────────────────────────────────\033[0m")
-
-        key = get_key()
-        if key in ('b', 'B', 'ESC', 'q', 'Q'):
-            break
-        elif key == ' ':
-            run_action(["--play-pause"])
-        elif key in ('+', '=', 'UP'):
-            run_action(["--vol-up"])
-        elif key in ('-', '_', 'DOWN'):
-            run_action(["--vol-down"])
-        elif key == '1':
-            try:
-                q = input("\n  🎵 Şarkı veya Sanatçı: ").strip()
-                if q:
-                    print(f"  \033[1;32m⏳ YouTube Music akışı başlıyor: '{q}'...\033[0m")
-                    run_action(["--search", q])
-                    time.sleep(1.0)
-            except Exception:
-                pass
-        elif key == '2':
-            run_action(["--search", "Top 50 Populer Sarkilar"])
-            time.sleep(1.0)
-
-# ==========================================
-# 3. CANLI İNTERNET RADYOLARI
-# ==========================================
-def radio_studio_menu():
-    while True:
-        data = get_engine_data()
-        os.system("clear")
-        print("\033[1;33m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-        print("║  📻 \033[1;37mCANLI İNTERNET RADYOLARI\033[0m • \033[1;33m7/24 Kesintisiz & Ücretsiz Yayın\033[0m              ║")
-        print("\033[1;33m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-
-        if data.get("status") == "PLAYING":
-            print(f"  ▶️  \033[1;32mCANLI YAYIN:\033[0m \033[1;37m{data.get('title')}\033[0m ({data.get('artist')})\n")
-
-        print("  \033[1;32m[1]\033[0m ☕ Lofi Beats (Sakin / Kodlama / Chill)")
-        print("  \033[1;36m[2]\033[0m 🎷 Jazz Radio Classics (Klasik Caz)")
-        print("  \033[1;35m[3]\033[0m 🌆 Nightwave Plaza (Synthwave / Cyberpunk)")
-        print("  \033[1;31m[4]\033[0m 🎸 Classic Rock Radio (Efsane Rock)")
-        print("  \033[1;34m[5]\033[0m 📻 TRT Radyo 3 (Klasik Müzik & Kültür)")
-        print("\n  \033[1;37m[Space]\033[0m ⏯️ Durdur/Devam | \033[1;37m[+ / -]\033[0m 🔊 Ses | \033[1;31m[b / ESC]\033[0m ⬅️ Ana Menüye Dön\n")
-        print("\033[1;33m──────────────────────────────────────────────────────────────────────────────\033[0m")
-
-        key = get_key()
-        if key in ('b', 'B', 'ESC', 'q', 'Q'):
-            break
-        elif key == ' ':
-            run_action(["--play-pause"])
-        elif key in ('+', '=', 'UP'):
-            run_action(["--vol-up"])
-        elif key in ('-', '_', 'DOWN'):
-            run_action(["--vol-down"])
-        elif key in ('1', '2', '3', '4', '5'):
-            st_map = {"1": "lofi", "2": "jazz", "3": "synthwave", "4": "rock", "5": "trt"}
-            run_action(["--play-radio", st_map[key]])
-            time.sleep(0.5)
-
-# ==========================================
-# 4. HESAP & GİRİŞ YÖNETİMİ (LOGIN / AUTH)
-# ==========================================
-def account_login_menu():
-    auth = get_auth_data()
+def search_dialog():
     os.system("clear")
     print("\033[1;36m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-    print("║  🔑 \033[1;33mHESAP & ÜYELİK GİRİŞİ\033[0m • \033[1;37mSpotify Premium / YouTube / Qobuz Yetkilendirme\033[0m  ║")
+    print("║  🔍 \033[1;33mOMAPLAYER ARAMA\033[0m • \033[1;37mTerminalden Doğrudan Müzik Arama & Çalma\033[0m               ║")
     print("\033[1;36m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-
-    print(f"  󰓇 \033[1;37mSpotify Hesabı:\033[0m {auth.get('spotify_user') or 'Tanımlanmadı'}")
-    print(f"  ⭐ \033[1;37mSpotify Premium:\033[0m {'Aktif (320 kbps High-Bitrate)' if auth.get('spotify_premium') else 'Kapalı'}\n")
-    print("-" * 65)
-    print("  Lütfen yapmak istediğiniz işlemi seçin:\n")
-    print("  \033[1;32m[1]\033[0m 󰓇 Spotify Kullanıcı Adı & Premium Kaydı Tanımla")
-    print("  \033[1;31m[2]\033[0m 󰗃 YouTube Music Premium Çerez / Oturum Doğrula")
-    print("  \033[1;36m[3]\033[0m 🎵 Qobuz Hi-Res 24-bit Oturum Bilgisi Gir")
-    print("  \033[1;31m[4]\033[0m 🗑️ Kayıtlı Oturumları Temizle")
-    print("\n  \033[0;90m[b / ESC] Geri Dön\033[0m\n")
-
+    print("  \033[1;37mÇalmak istediğiniz şarkı, albüm veya sanatçıyı yazın:\033[0m")
+    print("  \033[0;90m(Örnek: Daft Punk - Get Lucky, Ceza - Fark Var, Queen - Bohemian Rhapsody)\033[0m\n")
     try:
-        c = input("  Seçiminiz [1-4]: ").strip()
-    except Exception:
-        return
-
-    if c == "1":
-        user_in = input("\n  Spotify Kullanıcı Adınız / E-postanız: ").strip()
-        if user_in:
-            auth["spotify_user"] = user_in
-            auth["spotify_premium"] = True
-            save_auth_data(auth)
-            print(f"\n  \033[1;32m✓ '{user_in}' kullanıcısı için Spotify Premium modu aktifleştirildi!\033[0m")
-            time.sleep(1.2)
-    elif c == "2":
-        auth["yt_cookies"] = True
-        save_auth_data(auth)
-        print("\n  \033[1;32m✓ YouTube Music Premium oturum köprüsü başarıyla tanımlandı!\033[0m")
-        time.sleep(1.2)
-    elif c == "3":
-        q_user = input("\n  Qobuz E-postanız: ").strip()
-        if q_user:
-            auth["qobuz_user"] = q_user
-            save_auth_data(auth)
-            print(f"\n  \033[1;32m✓ Qobuz Hi-Res Stüdyo profili kaydedildi!\033[0m")
-            time.sleep(1.2)
-    elif c == "4":
-        save_auth_data({"spotify_user": "", "spotify_premium": False, "yt_cookies": False, "qobuz_user": ""})
-        print("\n  \033[1;33m✓ Tüm kayıtlı oturum bilgileri sıfırlandı.\033[0m")
-        time.sleep(1.0)
-
-# ==========================================
-# 5. YEREL MÜZİK ARŞİVİ
-# ==========================================
-def local_music_menu():
-    plugin_dir = os.path.dirname(os.path.realpath(__file__))
-    engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
-    
-    os.system("clear")
-    print("\033[1;35m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-    print("║  📁 \033[1;37mYEREL MÜZİK ARŞİVİ (~/Music)\033[0m                                             ║")
-    print("\033[1;35m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
-
-    try:
-        res = subprocess.run([engine_bin, "--list-local"], capture_output=True, text=True, timeout=1.5)
-        tracks = json.loads(res.stdout) if res.returncode == 0 else []
-    except Exception:
-        tracks = []
-
-    if not tracks:
-        print("  \033[1;33m~/Music klasöründe ses dosyası (.flac, .mp3, .wav) bulunamadı.\033[0m\n")
-        input("  Devam etmek için Enter'a basın...")
-        return
-
-    for idx, t in enumerate(tracks[:15]):
-        print(f"  \033[1;36m[{idx+1:02d}]\033[0m 🎵 {t['name']}")
-
-    print("\n  \033[0;90m[b / ESC] Geri Dön\033[0m\n")
-    try:
-        c = input("  Çalmak İstediğiniz Parça Numarası: ").strip()
-        if c.isdigit():
-            val = int(c)
-            if 1 <= val <= len(tracks):
-                run_action(["--play-file", tracks[val-1]["path"]])
-                time.sleep(0.5)
+        q = input("  🎵 Arama: ").strip()
+        if q:
+            print(f"\n  \033[1;32m⏳ '{q}' aranıyor ve terminalde başlatılıyor...\033[0m")
+            run_action(["--search", q])
+            time.sleep(1.0)
     except Exception:
         pass
 
-# ==========================================
-# MAIN HUB
-# ==========================================
+def radio_dialog():
+    os.system("clear")
+    print("\033[1;33m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
+    print("║  📻 \033[1;37mCANLI İNTERNET RADYOLARI\033[0m • \033[1;33mKesintisiz 7/24 Ücretsiz Yayın\033[0m                ║")
+    print("\033[1;33m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
+    print("  \033[1;32m[1]\033[0m ☕ Lofi Beats (Sakin / Kodlama / Chill)")
+    print("  \033[1;36m[2]\033[0m 🎷 Jazz Radio Classics (Klasik Caz & Blues)")
+    print("  \033[1;35m[3]\033[0m 🌆 Nightwave Plaza (Synthwave / Cyberpunk)")
+    print("  \033[1;31m[4]\033[0m 🎸 Classic Rock Radio (Efsanevi Rock)")
+    print("  \033[1;34m[5]\033[0m 📻 TRT Radyo 3 (Klasik Müzik & Kültür)")
+    print("\n  \033[0;90m[ESC / q] İptal\033[0m\n")
+    try:
+        c = input("  İstasyon Seçiniz [1-5]: ").strip()
+        st_map = {"1": "lofi", "2": "jazz", "3": "synthwave", "4": "rock", "5": "trt"}
+        if c in st_map:
+            run_action(["--play-radio", st_map[c]])
+            time.sleep(0.5)
+    except Exception:
+        pass
+
+def account_dialog():
+    auth = get_auth_data()
+    os.system("clear")
+    print("\033[1;36m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
+    print("║  🔑 \033[1;33mHESAP & ÜYELİK AYARLARI\033[0m • \033[1;37mSpotify Premium / YouTube / Qobuz Yetkisi\033[0m       ║")
+    print("\033[1;36m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
+    print(f"  󰓇 Spotify Kullanıcısı : {auth.get('spotify_user') or 'Tanımlanmadı'}")
+    print(f"  ⭐ Spotify Premium     : {'Aktif (320 kbps)' if auth.get('spotify_premium') else 'Kapalı'}\n")
+    print("-" * 65)
+    print("  [1] 󰓇 Spotify Kullanıcı Adı & Premium Kaydı Tanımla")
+    print("  [2] 󰗃 YouTube Music Premium Oturum Köprüsü")
+    print("  [3] 🎵 Qobuz Hi-Res 24-bit Oturum Bilgisi")
+    print("  [4] 🗑️ Kayıtlı Oturumları Sıfırla")
+    print("\n  [ESC / q] Geri Dön\n")
+    try:
+        c = input("  Seçiminiz [1-4]: ").strip()
+        if c == "1":
+            u = input("\n  Spotify Kullanıcı Adı / E-posta: ").strip()
+            if u:
+                auth["spotify_user"] = u
+                auth["spotify_premium"] = True
+                save_auth_data(auth)
+                print(f"\n  \033[1;32m✓ '{u}' için Spotify Premium modu aktifleştirildi!\033[0m")
+                time.sleep(1.2)
+        elif c == "2":
+            auth["yt_cookies"] = True
+            save_auth_data(auth)
+            print("\n  \033[1;32m✓ YouTube Music Premium köprüsü kaydedildi!\033[0m")
+            time.sleep(1.2)
+        elif c == "3":
+            qu = input("\n  Qobuz E-postanız: ").strip()
+            if qu:
+                auth["qobuz_user"] = qu
+                save_auth_data(auth)
+                print(f"\n  \033[1;32m✓ Qobuz Hi-Res profili kaydedildi!\033[0m")
+                time.sleep(1.2)
+        elif c == "4":
+            save_auth_data({"spotify_user": "", "spotify_premium": False, "yt_cookies": False, "qobuz_user": ""})
+            print("\n  \033[1;33m✓ Oturumlar sıfırlandı.\033[0m")
+            time.sleep(1.0)
+    except Exception:
+        pass
+
 def main():
+    # Multi-line dynamic oscilloscope frames
+    osc_frames = [
+        ("  ▂▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▅▆▇█▇▆▅▃  ", " ▃▅▇████████▇▅▃ ▂▃▅▇████████▇ "),
+        (" ▂▃▅▆▇████▇▆▅▃▂   ▂▃▄▅▆▇█▇▆▅  ", " ▅▇██████████▇▅ ▃▅▇█████████▇ "),
+        (" ▃▄▅▆▇█▇▆▅▄▃▂   ▂▃▄▅▆▇████▇▆  ", " ▇████████████▇ ▅███████████▇ "),
+        (" ▅▆▇████▇▆▅▄▃▂   ▂▃▅▆▇████▇▆  ", " █▇▆▅▃▂ ▂▃▅▆▇██ ▇████████████ "),
+        (" ▇████████▇▆▅▃   ▃▄▅▆▇████▇▆  ", " ▅▃▂   ▂▃▅▆▇███ █████████████ "),
+        (" ▆▅▄▃▂ ▂▃▄▅▆▇█   ▅▆▇██████▇▆  ", " ▂  ▂▃▄▅▆▇█████ ▇████████████ ")
+    ]
+    frame_idx = 0
+
     while True:
         auth = get_auth_data()
         user_info = auth.get("spotify_user") or "Misafir"
-        prem_str = " (Premium ⭐)" if auth.get("spotify_premium") else ""
+        prem_badge = " ⭐ PREM" if auth.get("spotify_premium") else ""
 
         data = get_engine_data()
         status = data.get("status", "STOPPED")
         is_playing = (status == "PLAYING")
         title = data.get("title", "Müzik Çalmıyor")
-        artist = data.get("artist", "")
+        artist = data.get("artist", "OmaPlayer CLI")
+        src_name = data.get("source_name", "OmaPlayer")
+        pos = data.get("position_sec", 0)
+        length = data.get("length_sec", 0)
+        vol = data.get("volume_pct", 85)
+
+        if is_playing:
+            osc1, osc2 = osc_frames[frame_idx % len(osc_frames)]
+            frame_idx += 1
+            st_text = "\033[1;32m▶️ ÇALIYOR\033[0m"
+        else:
+            osc1 = " ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂   ▂▃▂ ▂▃▂  "
+            osc2 = " ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃   ▃▅▃ ▃▅▃  "
+            st_text = "\033[1;33m⏸️ DURAKLATILDI\033[0m" if status == "PAUSED" else "\033[0;90m⏹️ DURDU\033[0m"
 
         os.system("clear")
-        print("\033[1;35m╔══════════════════════════════════════════════════════════════════════════════╗\033[0m")
-        print("║  󰎆 \033[1;37mOMAPLAYER\033[0m • \033[1;33mEvrensel Müzik, Radyo & Streaming Karargahı\033[0m                   ║")
-        print("\033[1;35m╚══════════════════════════════════════════════════════════════════════════════╝\033[0m\n")
+        print("\033[1;36m╔══════════════════════════════════════╦════════════════════════════════════════════╗\033[0m")
+        print("║  🎛️  \033[1;33mMENÜ & PLATFORMLAR\033[0m               ║  🎵  \033[1;37mÇALAN MÜZİK & CANLI OSİLOSKOP\033[0m         ║")
+        print("\033[1;36m╠══════════════════════════════════════╬════════════════════════════════════════════╣\033[0m")
 
-        print(f"  👤 \033[1;37mOturum:\033[0m \033[1;36m{user_info}{prem_str}\033[0m")
-        if is_playing:
-            print(f"  ▶️  \033[1;32mCANLI AKIŞ:\033[0m \033[1;37m{title}\033[0m • \033[0;90m{artist}\033[0m")
-            print(f"  ⏱️  {render_progress_bar(data.get('position_sec', 0), data.get('length_sec', 0))}")
-            print(f"  {render_volume_bar(data.get('volume_pct', 85))}\n")
-        else:
-            print("  ℹ️  \033[0;90mŞu anda müzik çalmıyor. Dinlemek istediğiniz platformu seçin:\033[0m\n")
+        # Row 1
+        l1 = f" \033[1;32m[1]\033[0m 󰓇 \033[1;37mSpotify CLI Stüdyosu\033[0m       "
+        r1 = f" \033[1;37mParça   :\033[0m \033[1;32m{title[:28]:<28}\033[0m "
+        print(f"║ {l1:<46} ║ {r1:<51} ║")
 
-        print("  \033[1;32m[1]\033[0m 󰓇 \033[1;37mSpotify CLI Stüdyosu\033[0m       \033[0;90m(Premium / Arama / Çalma Listeleri)\033[0m")
-        print("  \033[1;31m[2]\033[0m 󰗃 \033[1;37mYouTube Music CLI\033[0m          \033[0;90m(Sınırsız Arama & Yüksek Bitrate)\033[0m")
-        print("  \033[1;33m[3]\033[0m 📻 \033[1;37mCanlı İnternet Radyoları\033[0m   \033[1;32m[ÜCRETSİZ]\033[0m \033[0;90m(Lofi, Jazz, TRT, Rock)\033[0m")
-        print("  \033[1;35m[4]\033[0m 📁 \033[1;37mYerel Müzik Arşivi\033[0m         \033[0;90m(~/Music FLAC / MP3)\033[0m")
-        print("  \033[1;36m[5]\033[0m 🔑 \033[1;37mHesap & Üyelik Girişi\033[0m      \033[0;90m(Spotify / YouTube / Qobuz Ayarları)\033[0m")
-        print("\n\033[1;35m──────────────────────────────────────────────────────────────────────────────\033[0m")
-        print("  \033[1;37m[Space]\033[0m ⏯️ Oynat/Dur | \033[1;37m[+ / -]\033[0m 🔊 Ses | \033[1;31m[x]\033[0m ⏹️ Durdur | \033[1;31m[q]\033[0m 🚪 Çıkış")
-        print("\033[1;35m──────────────────────────────────────────────────────────────────────────────\033[0m")
+        # Row 2
+        l2 = f" \033[1;31m[2]\033[0m 󰗃 \033[1;37mYouTube Music CLI\033[0m          "
+        r2 = f" \033[1;37mSanatçı :\033[0m \033[1;36m{artist[:28]:<28}\033[0m "
+        print(f"║ {l2:<46} ║ {r2:<51} ║")
+
+        # Row 3
+        l3 = f" \033[1;33m[3]\033[0m 📻 \033[1;37mCanlı İnternet Radyoları\033[0m   "
+        r3 = f" \033[1;37mKaynak  :\033[0m \033[1;35m{src_name[:28]:<28}\033[0m "
+        print(f"║ {l3:<46} ║ {r3:<51} ║")
+
+        # Row 4
+        l4 = f" \033[1;35m[4]\033[0m 📁 \033[1;37mYerel Arşiv (~/Music)\033[0m      "
+        r4 = f" \033[1;37mDurum   :\033[0m {st_text:<38} "
+        print(f"║ {l4:<46} ║ {r4:<51} ║")
+
+        # Row 5
+        l5 = f" \033[1;36m[5]\033[0m 🔑 \033[1;37mHesap & Üyelik Girişi\033[0m     "
+        r5 = f" \033[1;37mOturum  :\033[0m \033[0;90m{user_info[:16]}{prem_badge}\033[0m{' ' * max(0, 14 - len(user_info) - len(prem_badge))} "
+        print(f"║ {l5:<46} ║ {r5:<51} ║")
+
+        # Row 6: Divider
+        print("\033[1;36m╠──────────────────────────────────────╫────────────────────────────────────────────┨\033[0m")
+
+        # Row 7: Oscilloscope header & lines
+        l7 = f" \033[1;32m[f]\033[0m 🔍 \033[1;37mŞarkı / Sanatçı Ara\033[0m        "
+        r7 = f" \033[1;33m🌊 CANLI OSİLOSKOP / SPEKTRUM:\033[0m              "
+        print(f"║ {l7:<46} ║ {r7:<51} ║")
+
+        l8 = f" \033[1;37m[Space]\033[0m ⏯️ \033[1;37mOynat / Duraklat\033[0m     "
+        r8 = f"   \033[1;36m{osc1}\033[0m "
+        print(f"║ {l8:<46} ║ {r8:<51} ║")
+
+        l9 = f" \033[1;37m[+ / -]\033[0m 🔊 \033[1;37mSes Ayarla (%5)\033[0m      "
+        r9 = f"   \033[1;35m{osc2}\033[0m "
+        print(f"║ {l9:<46} ║ {r9:<51} ║")
+
+        l10 = f" \033[1;31m[x]\033[0m ⏹️ \033[1;37mMüziği Durdur\033[0m          "
+        r10 = f" ⏱️  {render_progress_bar(pos, length, 16):<35} "
+        print(f"║ {l10:<46} ║ {r10:<51} ║")
+
+        l11 = f" \033[1;31m[q]\033[0m 🚪 \033[1;37mArka Planda Çal & Çık\033[0m  "
+        r11 = f" {render_volume_bar(vol, 12):<38} "
+        print(f"║ {l11:<46} ║ {r11:<51} ║")
+
+        print("\033[1;36m╚══════════════════════════════════════╩════════════════════════════════════════════╝\033[0m")
 
         key = get_key()
 
@@ -378,6 +269,8 @@ def main():
             break
         elif key == ' ':
             run_action(["--play-pause"])
+        elif key in ('f', 'F'):
+            search_dialog()
         elif key in ('+', '=', 'UP'):
             run_action(["--vol-up"])
         elif key in ('-', '_', 'DOWN'):
@@ -385,15 +278,17 @@ def main():
         elif key in ('x', 'X'):
             run_action(["--stop"])
         elif key == '1':
-            spotify_studio_menu()
+            search_dialog()
         elif key == '2':
-            ytmusic_studio_menu()
+            search_dialog()
         elif key == '3':
-            radio_studio_menu()
+            radio_dialog()
         elif key == '4':
-            local_music_menu()
+            print("\n  Yerel Müzik taranıyor...")
+            run_action(["--list-local"])
+            time.sleep(0.5)
         elif key == '5':
-            account_login_menu()
+            account_dialog()
 
 if __name__ == "__main__":
     main()
