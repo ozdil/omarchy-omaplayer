@@ -14,27 +14,27 @@ SOCKET_PATH = "/tmp/omaplayer_mpv.sock"
 
 RADIO_STREAMS = {
     "lofi": {
-        "name": "☕ Lofi Beats (Sakin / Kodlama)",
+        "name": "Lofi Beats (Sakin / Kodlama)",
         "url": "https://stream.zeno.fm/f3wvbbqmdg8uv",
         "genre": "Lofi & Chill"
     },
     "jazz": {
-        "name": "🎷 Jazz Radio Classics",
+        "name": "Jazz Radio Classics",
         "url": "https://jazz-wr01.ice.infomaniak.ch/jazz-wr01-128.mp3",
         "genre": "Jazz & Soul"
     },
     "synthwave": {
-        "name": "🌆 Nightwave Plaza (Synthwave)",
+        "name": "Nightwave Plaza (Synthwave)",
         "url": "https://plaza.one/mp3",
         "genre": "Synthwave & Retrowave"
     },
     "rock": {
-        "name": "🎸 Classic Rock Radio",
+        "name": "Classic Rock Radio",
         "url": "https://ais-sa2.cdnstream1.com/1988_128.mp3",
         "genre": "Rock & Metal"
     },
     "trt": {
-        "name": "📻 TRT Radyo 3 (Klasik & Senfoni)",
+        "name": "TRT Radyo 3 (Klasik & Senfoni)",
         "url": "https://radio-trtradyo3.live.trt.com.tr/master.m3u8",
         "genre": "Classical & Culture"
     }
@@ -50,7 +50,7 @@ def get_auth_data():
                 return json.load(f)
     except Exception:
         pass
-    return {"spotify_user": "", "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
+    return {"spotify_user": "ozdil", "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
 
 def save_auth_data(data):
     os.makedirs(os.path.dirname(AUTH_FILE), mode=0o700, exist_ok=True)
@@ -168,6 +168,7 @@ def get_spotify_mpris():
                     title = "Bilinmeyen Şarkı"
                     artist = "Spotify"
                     album = ""
+                    length_sec = 0
                     if meta_res.returncode == 0:
                         m_t = re.search(r'"xesam:title"\s+s\s+"([^"]+)"', meta_res.stdout)
                         if m_t: title = m_t.group(1)
@@ -175,6 +176,8 @@ def get_spotify_mpris():
                         if m_a: artist = m_a.group(1)
                         m_alb = re.search(r'"xesam:album"\s+s\s+"([^"]+)"', meta_res.stdout)
                         if m_alb: album = m_alb.group(1)
+                        m_len = re.search(r'"mpris:length"\s+(?:x|t|u)\s+(\d+)', meta_res.stdout)
+                        if m_len: length_sec = int(m_len.group(1)) // 1000000
 
                     st_res = subprocess.run(
                         ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"],
@@ -193,9 +196,9 @@ def get_spotify_mpris():
                         "bitrate_kbps": 320,
                         "sample_rate": "44.1 kHz",
                         "is_lossless": False,
-                        "quality_label": "⭐ SPOTIFY PREMIUM: 320 kbps (Extreme Kalite)",
+                        "quality_label": "SPOTIFY PREMIUM: 320 kbps (44.1 kHz)",
                         "position_sec": 0,
-                        "length_sec": 0,
+                        "length_sec": length_sec,
                         "volume_pct": 85,
                         "service": service
                     }
@@ -231,11 +234,11 @@ def get_playback_info():
             auth = get_auth_data()
 
             if is_lossless:
-                quality_label = f"💎 LOSSLESS ({raw_codec} 24-bit • {sr_khz} Frekans)"
+                quality_label = f"LOSSLESS ({raw_codec} 24-bit • {sr_khz})"
             elif source == "spotify" or auth.get("spotify_premium"):
-                quality_label = f"⭐ SPOTIFY PREMIUM: 320 kbps En Yüksek Ses ({sr_khz})"
+                quality_label = f"SPOTIFY PREMIUM: 320 kbps ({sr_khz})"
             else:
-                quality_label = f"🎧 {bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
+                quality_label = f"{bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
 
             source_labels = {
                 "spotify": "Spotify Premium",
@@ -258,9 +261,9 @@ def get_playback_info():
                 "sample_rate": sr_khz,
                 "is_lossless": is_lossless,
                 "quality_label": quality_label,
-                "position_sec": int(pos) if isinstance(pos, (int, float)) else 0,
-                "length_sec": int(dur) if isinstance(dur, (int, float)) else 0,
-                "volume_pct": int(vol) if isinstance(vol, (int, float)) else 85,
+                "position_sec": int(float(pos)) if pos else 0,
+                "length_sec": int(float(dur)) if dur else 0,
+                "volume_pct": int(float(vol)) if vol else 85,
                 "service": "OmaPlayer MPV Daemon"
             }
 
@@ -276,13 +279,13 @@ def get_playback_info():
         "source": state.get("active_source", "spotify"),
         "source_name": "OmaPlayer",
         "title": "Müzik Çalmıyor",
-        "artist": f"Hesap: {user_badge} (Premium ⭐)",
+        "artist": f"Hesap: {user_badge} (Premium)",
         "album": "",
         "codec": "None",
         "bitrate_kbps": 320,
         "sample_rate": "48.0 kHz",
         "is_lossless": False,
-        "quality_label": "⭐ SPOTIFY PREMIUM (320 kbps Hazır)",
+        "quality_label": "SPOTIFY PREMIUM: 320 kbps (Hazır)",
         "position_sec": 0,
         "length_sec": 0,
         "volume_pct": 0,

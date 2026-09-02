@@ -63,7 +63,6 @@ def send_mpv_direct(cmd_list):
     return None
 
 def get_playback_metrics():
-    # 1. Zero-latency direct socket query (< 0.5ms)
     if os.path.exists(SOCKET_PATH):
         idle = send_mpv_direct(["get_property", "idle-active"])
         if idle is False:
@@ -86,11 +85,11 @@ def get_playback_metrics():
             auth = get_auth_data()
 
             if is_lossless:
-                quality_label = f"💎 LOSSLESS ({raw_codec} 24-bit • {sr_khz})"
+                quality_label = f"LOSSLESS ({raw_codec} 24-bit • {sr_khz})"
             elif source == "spotify" or auth.get("spotify_premium"):
-                quality_label = f"⭐ SPOTIFY PREMIUM: 320 kbps (Extreme • {sr_khz})"
+                quality_label = f"SPOTIFY PREMIUM: 320 kbps ({sr_khz})"
             else:
-                quality_label = f"🎧 {bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
+                quality_label = f"{bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
 
             src_names = {
                 "spotify": "Spotify Premium",
@@ -112,12 +111,11 @@ def get_playback_metrics():
                 "sample_rate": sr_khz,
                 "is_lossless": is_lossless,
                 "quality_label": quality_label,
-                "position_sec": int(pos) if isinstance(pos, (int, float)) else 0,
-                "length_sec": int(dur) if isinstance(dur, (int, float)) else 0,
-                "volume_pct": int(vol) if isinstance(vol, (int, float)) else 85
+                "position_sec": int(float(pos)) if pos else 0,
+                "length_sec": int(float(dur)) if dur else 0,
+                "volume_pct": int(float(vol)) if vol else 85
             }
 
-    # 2. Fallback to state
     state = get_saved_state()
     auth = get_auth_data()
     return {
@@ -126,12 +124,12 @@ def get_playback_metrics():
         "source": state.get("active_source", "spotify"),
         "source_name": "OmaPlayer",
         "title": "Müzik Çalmıyor",
-        "artist": "ozdil (Spotify Premium ⭐)",
+        "artist": "ozdil (Spotify Premium)",
         "codec": "None",
         "bitrate_kbps": 320,
         "sample_rate": "48.0 kHz",
         "is_lossless": False,
-        "quality_label": "⭐ SPOTIFY PREMIUM: 320 kbps (Hazır)",
+        "quality_label": "SPOTIFY PREMIUM: 320 kbps (Hazır)",
         "position_sec": 0,
         "length_sec": 0,
         "volume_pct": 0
@@ -151,7 +149,6 @@ def run_action_fast(args):
         send_mpv_direct(["stop"])
         return
 
-    # Subprocess fallback for heavy operations (search/radio loading)
     plugin_dir = os.path.dirname(os.path.realpath(__file__))
     engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
     try:
@@ -160,18 +157,25 @@ def run_action_fast(args):
         pass
 
 def format_time(seconds):
-    m = seconds // 60
-    s = seconds % 60
-    return f"{m:02d}:{s:02d}"
+    try:
+        sec = int(float(seconds))
+        m = sec // 60
+        s = sec % 60
+        return f"{m:02d}:{s:02d}"
+    except Exception:
+        return "00:00"
 
 def render_progress_bar(pos, length, width=22):
     width = max(8, width)
-    if length <= 0:
+    p_sec = int(float(pos)) if pos else 0
+    l_sec = int(float(length)) if length else 0
+
+    if l_sec <= 0:
         return f"[━{'─' * (width - 1)}] Canlı"
-    ratio = min(1.0, max(0.0, pos / length))
+    ratio = min(1.0, max(0.0, p_sec / l_sec))
     filled = int(ratio * width)
     bar = "━" * filled + "●" + "─" * max(0, width - filled - 1)
-    return f"[{bar[:width]}] {format_time(pos)} / {format_time(length)}"
+    return f"[{bar[:width]}] {format_time(p_sec)} / {format_time(l_sec)}"
 
 def strip_ansi(s):
     return re.sub(r'\x1b\[[0-9;]*m', '', str(s))
@@ -234,14 +238,14 @@ def playlists_dialog():
     print("\033[1;35m┌──────────────────────────────────────────────────────────┐\033[0m")
     print("│  📂 \033[1;37mKİŞİSEL ÇALMA LİSTELERİ & ARŞİV\033[0m                      │")
     print("\033[1;35m├──────────────────────────────────────────────────────────┤\033[0m")
-    print("│  \033[1;32m[1]\033[0m ⭐ Beğenilen Şarkılarım (Liked Songs)               │")
-    print("│  \033[1;36m[2]\033[0m 🔥 Haftalık Keşif Listesi (Discover Weekly)         │")
-    print("│  \033[1;33m[3]\033[0m 🇹🇷 Türkçe Pop, Rap & Alternatif Hitleri              │")
-    print("│  \033[1;34m[4]\033[0m ☕ Lofi & Kodlama Odaklanma Miksi                     │")
-    print("│  \033[1;35m[5]\033[0m 🌆 Synthwave / Retrowave Cyberpunk Arşivi           │")
-    print("│  \033[1;31m[6]\033[0m 🎸 Efsane Classic Rock Klasikleri                     │")
-    print("│  \033[1;37m[7]\033[0m 🎻 Klasik Müzik & Piyano Konsantrasyon              │")
-    print("│  \033[1;32m[8]\033[0m 📁 ~/Music Klasörümdeki Yerel Çalma Listeleri       │")
+    print("│  \033[1;32m[1]\033[0m ★ Beğenilen Şarkılarım (Liked Songs)               │")
+    print("│  \033[1;36m[2]\033[0m ★ Haftalık Keşif Listesi (Discover Weekly)         │")
+    print("│  \033[1;33m[3]\033[0m ★ Türkçe Pop, Rap & Alternatif Hitleri              │")
+    print("│  \033[1;34m[4]\033[0m ★ Lofi & Kodlama Odaklanma Miksi                     │")
+    print("│  \033[1;35m[5]\033[0m ★ Synthwave / Retrowave Cyberpunk Arşivi           │")
+    print("│  \033[1;31m[6]\033[0m ★ Efsane Classic Rock Klasikleri                     │")
+    print("│  \033[1;37m[7]\033[0m ★ Klasik Müzik & Piyano Konsantrasyon              │")
+    print("│  \033[1;32m[8]\033[0m ★ ~/Music Klasörümdeki Yerel Çalma Listeleri       │")
     print("\033[1;35m└──────────────────────────────────────────────────────────┘\033[0m\n")
     try:
         c = input("  Çalmak İstediğiniz Liste [1-8]: ").strip()
@@ -330,7 +334,6 @@ def main():
     ]
     frame_idx = 0
 
-    # Hide cursor for flicker-free gaming-grade rendering
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
@@ -366,7 +369,6 @@ def main():
                 st_badge = "\033[0;90m■ KAPALI\033[0m"
                 wave = " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ "
 
-            # Build double-buffered output frame in memory to prevent all flicker
             buf = []
             buf.append("\033[H\033[J")
             buf.append("\033[1;36m" + "┌" + ("─" * (inner_w + 2)) + "┐" + "\033[0m")
@@ -383,14 +385,15 @@ def main():
             t_styled = f"  \033[1;32m{track_full[:inner_w-4]}\033[0m"
             buf.append(make_row(t_styled, inner_w))
 
-            # Quality & Format
+            # Quality & Format (Strictly ASCII single-cell)
             q_color = "\033[1;35m" if is_lossless else "\033[1;33m"
-            q_line = f"  {q_color}{quality[:inner_w-4]}\033[0m"
-            buf.append(make_row(q_line, inner_w))
+            q_clean = strip_ansi(quality)
+            q_styled = f"  {q_color}{q_clean[:inner_w-4]}\033[0m"
+            buf.append(make_row(q_styled, inner_w))
 
             # Progress
-            p_bar = render_progress_bar(pos, length, max(8, inner_w - 26))
-            p_styled = f"  {st_badge} {p_bar}  \033[0;90m%{vol}\033[0m"
+            p_bar = render_progress_bar(pos, length, max(8, inner_w - 28))
+            p_styled = f"  {st_badge} {p_bar}"
             buf.append(make_row(p_styled, inner_w))
 
             # Wave
@@ -411,7 +414,6 @@ def main():
 
             buf.append("\033[1;36m" + "└" + ("─" * (inner_w + 2)) + "┘" + "\033[0m")
 
-            # Single atomic flush to terminal
             sys.stdout.write("\n".join(buf) + "\n")
             sys.stdout.flush()
 
@@ -441,7 +443,6 @@ def main():
             elif key == '5':
                 account_dialog()
     finally:
-        # Restore terminal cursor
         sys.stdout.write("\033[?25h\n")
         sys.stdout.flush()
 
