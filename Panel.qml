@@ -16,6 +16,12 @@ Panel {
   property string playbackStatus: "STOPPED"
   property bool isPlaying: (playbackStatus === "PLAYING")
 
+  function cleanSanitized(str, maxLen) {
+    if (!str) return ""
+    var s = String(str).replace(/[\x00-\x1f\x7f-\x9f<>&`'"\\]/g, "").trim()
+    return s.slice(0, maxLen || 64)
+  }
+
   Process {
     id: statusProc
     command: [Qt.resolvedUrl("omaplayer-engine").toString().replace(/^file:\/\//, ""), "--json"]
@@ -23,11 +29,12 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         try {
-          var parsed = JSON.parse(text)
-          root.trackTitle = parsed.title || "Müzik Çalmıyor"
-          root.trackArtist = parsed.artist || "OmaPlayer"
-          root.sourceName = parsed.source_name || "Müzik"
-          root.playbackStatus = parsed.status || "STOPPED"
+          var cleanText = String(text || "").slice(0, 65536)
+          var parsed = JSON.parse(cleanText)
+          root.trackTitle = root.cleanSanitized(parsed.title || "Müzik Çalmıyor", 40)
+          root.trackArtist = root.cleanSanitized(parsed.artist || "OmaPlayer", 35)
+          root.sourceName = root.cleanSanitized(parsed.source_name || "Müzik", 30)
+          root.playbackStatus = root.cleanSanitized(parsed.status || "STOPPED", 20)
         } catch(e) {
           root.playbackStatus = "STOPPED"
         }
@@ -39,11 +46,41 @@ Panel {
     id: actionProc
   }
 
+  Process {
+    id: launchProc
+    onExited: function(exitCode) {
+      launchDeadlineTimer.stop()
+    }
+  }
+
+  Timer {
+    id: launchDeadlineTimer
+    interval: 5000
+    repeat: false
+    onTriggered: {
+      if (launchProc.running) launchProc.kill()
+    }
+  }
+
+  Component.onDestruction: {
+    if (statusProc.running) statusProc.kill()
+    if (actionProc.running) actionProc.kill()
+    if (launchProc.running) launchProc.kill()
+  }
+
   function sendCmd(arg) {
     var eng = Qt.resolvedUrl("omaplayer-engine").toString().replace(/^file:\/\//, "")
     actionProc.command = [eng, arg]
     actionProc.running = true
     refreshTimer.restart()
+  }
+
+  function launchDashboard() {
+    root.close()
+    var dashPath = Qt.resolvedUrl("omaplayer-dashboard").toString().replace(/^file:\/\//, "")
+    launchProc.command = ["omarchy-launch-floating-terminal-with-presentation", dashPath]
+    launchDeadlineTimer.restart()
+    launchProc.running = true
   }
 
   Timer {
@@ -94,6 +131,7 @@ Panel {
       RowLayout {
         width: parent.width
         Text {
+          textFormat: Text.PlainText
           text: "🎵 OmaPlayer • Müzik Merkezi"
           font.pixelSize: Style.font.title
           font.bold: true
@@ -107,6 +145,7 @@ Panel {
           radius: 11
           color: root.isPlaying ? "#9333ea" : "#334155"
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: root.isPlaying ? "ÇALIYOR" : "DURDU"
             font.pixelSize: 9
@@ -130,12 +169,18 @@ Panel {
           anchors.margins: 10
           spacing: 10
 
-          Text { text: "󰎆"; font.pixelSize: 28; color: "#c084fc" }
+          Text {
+            textFormat: Text.PlainText
+            text: "󰎆"
+            font.pixelSize: 28
+            color: "#c084fc"
+          }
 
           Column {
             Layout.fillWidth: true
             spacing: 2
             Text {
+              textFormat: Text.PlainText
               text: root.trackTitle
               font.bold: true
               font.pixelSize: Style.font.body
@@ -144,6 +189,7 @@ Panel {
               width: 320
             }
             Text {
+              textFormat: Text.PlainText
               text: root.trackArtist + " • " + root.sourceName
               font.pixelSize: Style.font.caption
               color: "#94a3b8"
@@ -183,11 +229,7 @@ Panel {
       Button {
         width: parent.width
         text: "⚡ Terminal Müzik & Radyo Stüdyosunu Aç"
-        onClicked: {
-          root.close()
-          var dashPath = Qt.resolvedUrl("omaplayer-dashboard").toString().replace(/^file:\/\//, "")
-          if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation " + dashPath)
-        }
+        onClicked: root.launchDashboard()
       }
     }
   }

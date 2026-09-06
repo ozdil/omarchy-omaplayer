@@ -11,7 +11,12 @@ import socket
 
 AUTH_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/auth.json")
 STATE_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/state.json")
-SOCKET_PATH = "/tmp/omaplayer_mpv.sock"
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+if not os.path.isdir(RUNTIME_DIR):
+    RUNTIME_DIR = os.path.expanduser("~/.local/state/omaplayer")
+os.makedirs(RUNTIME_DIR, mode=0o700, exist_ok=True)
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "omaplayer_mpv.sock")
 
 def get_auth_data():
     try:
@@ -20,7 +25,8 @@ def get_auth_data():
                 return json.load(f)
     except Exception:
         pass
-    return {"spotify_user": "ozdil", "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
+    cur_user = os.environ.get("USER", "user")
+    return {"spotify_user": cur_user, "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
 
 def save_auth_data(data):
     os.makedirs(os.path.dirname(AUTH_FILE), mode=0o700, exist_ok=True)
@@ -152,7 +158,7 @@ def run_action_fast(args):
     plugin_dir = os.path.dirname(os.path.realpath(__file__))
     engine_bin = os.path.join(plugin_dir, "omaplayer-engine")
     try:
-        subprocess.run([engine_bin] + args, capture_output=True, timeout=2.5)
+        subprocess.run([engine_bin] + args, capture_output=True, timeout=2.5, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
     except Exception:
         pass
 

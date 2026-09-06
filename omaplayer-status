@@ -9,7 +9,7 @@ def main():
     engine_path = os.path.join(plugin_dir, "omaplayer-engine")
 
     try:
-        res = subprocess.run([engine_path, "--json"], capture_output=True, text=True, timeout=1.5)
+        res = subprocess.run([engine_path, "--json"], capture_output=True, text=True, timeout=1.5, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
         data = json.loads(res.stdout) if res.returncode == 0 else {}
     except Exception:
         data = {}

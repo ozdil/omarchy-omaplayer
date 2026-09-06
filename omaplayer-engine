@@ -10,7 +10,18 @@ import socket
 
 AUTH_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/auth.json")
 STATE_FILE = os.path.expanduser("~/.local/share/omarchy/omaplayer/state.json")
-SOCKET_PATH = "/tmp/omaplayer_mpv.sock"
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+if not os.path.isdir(RUNTIME_DIR):
+    RUNTIME_DIR = os.path.expanduser("~/.local/state/omaplayer")
+os.makedirs(RUNTIME_DIR, mode=0o700, exist_ok=True)
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "omaplayer_mpv.sock")
+
+MAX_BYTE_LIMIT = 65536
+CLEAN_ENV = {
+    "PATH": "/usr/bin:/bin",
+    "LC_ALL": "C"
+}
 
 RADIO_STREAMS = {
     "lofi": {
@@ -40,8 +51,17 @@ RADIO_STREAMS = {
     }
 }
 
-def sanitize_str(s, max_len=60):
-    return re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(s))[:max_len].strip()
+def sanitize_mpris_str(s, max_len=60):
+    if not s:
+        return ""
+    val = str(s)
+    # Strip HTML/XML tags
+    val = re.sub(r'<[^>]*>', '', val)
+    # Strip markup delimiters, quotes, ampersands, backslashes, and control characters
+    val = re.sub(r'[\x00-\x1f\x7f-\x9f<>&`\'"\\]', '', val)
+    # Collapse whitespace
+    val = re.sub(r'\s+', ' ', val).strip()
+    return val[:max_len]
 
 def get_auth_data():
     try:
@@ -50,7 +70,8 @@ def get_auth_data():
                 return json.load(f)
     except Exception:
         pass
-    return {"spotify_user": "ozdil", "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
+    cur_user = os.environ.get("USER", "user")
+    return {"spotify_user": cur_user, "spotify_premium": True, "yt_cookies": False, "qobuz_user": ""}
 
 def save_auth_data(data):
     os.makedirs(os.path.dirname(AUTH_FILE), mode=0o700, exist_ok=True)
@@ -130,14 +151,14 @@ def play_terminal_stream(url, title=None, artist=None, source_type="streaming"):
     send_mpv_command(["loadfile", url, "replace"])
     state = get_saved_state()
     state["active_source"] = source_type
-    state["current_title"] = sanitize_str(title or "Canlı Yayın", 40)
-    state["current_artist"] = sanitize_str(artist or "Terminal CLI", 35)
+    state["current_title"] = sanitize_mpris_str(title or "Canlı Yayın", 40)
+    state["current_artist"] = sanitize_mpris_str(artist or "Terminal CLI", 35)
     save_state(state)
     return True
 
 def play_query_stream(query, source_type="spotify"):
     ensure_mpv_running()
-    clean_q = sanitize_str(query, 50)
+    clean_q = sanitize_mpris_str(query, 50)
     if not clean_q:
         return False
     ytdl_url = f"ytdl://ytsearch1:{clean_q}"
@@ -154,7 +175,7 @@ def get_spotify_mpris():
         res = subprocess.run(
             ["/usr/bin/busctl", "--user", "list"],
             capture_output=True, text=True, timeout=0.8,
-            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+            env=CLEAN_ENV
         )
         for line in res.stdout.splitlines():
             if "org.mpris.MediaPlayer2" in line and ("spotify" in line.lower() or "ncspot" in line.lower()):
@@ -163,7 +184,7 @@ def get_spotify_mpris():
                     service = m.group(1)
                     meta_res = subprocess.run(
                         ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Metadata"],
-                        capture_output=True, text=True, timeout=0.6, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+                        capture_output=True, text=True, timeout=0.6, env=CLEAN_ENV
                     )
                     title = "Bilinmeyen Şarkı"
                     artist = "Spotify"
@@ -181,7 +202,7 @@ def get_spotify_mpris():
 
                     st_res = subprocess.run(
                         ["/usr/bin/busctl", "--user", "get-property", service, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"],
-                        capture_output=True, text=True, timeout=0.6, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+                        capture_output=True, text=True, timeout=0.6, env=CLEAN_ENV
                     )
                     status = "PLAYING" if "Playing" in st_res.stdout else "PAUSED"
                     return {
@@ -189,9 +210,9 @@ def get_spotify_mpris():
                         "is_running": True,
                         "source": "spotify",
                         "source_name": "Spotify Premium",
-                        "title": sanitize_str(title, 40),
-                        "artist": sanitize_str(artist, 35),
-                        "album": sanitize_str(album, 35),
+                        "title": sanitize_mpris_str(title, 40),
+                        "artist": sanitize_mpris_str(artist, 35),
+                        "album": sanitize_mpris_str(album, 35),
                         "codec": "OGG VORBIS",
                         "bitrate_kbps": 320,
                         "sample_rate": "44.1 kHz",
@@ -253,8 +274,8 @@ def get_playback_info():
                 "is_running": True,
                 "source": source,
                 "source_name": source_labels.get(source, "OmaPlayer"),
-                "title": sanitize_str(state.get("current_title") or media_title, 40),
-                "artist": sanitize_str(state.get("current_artist") or "Spotify Premium CLI", 35),
+                "title": sanitize_mpris_str(state.get("current_title") or media_title, 40),
+                "artist": sanitize_mpris_str(state.get("current_artist") or "Spotify Premium CLI", 35),
                 "album": "OmaPlayer Native Engine",
                 "codec": raw_codec,
                 "bitrate_kbps": bitrate_kbps,
@@ -272,14 +293,14 @@ def get_playback_info():
 
     state = get_saved_state()
     auth = get_auth_data()
-    user_badge = auth.get("spotify_user") or "ozdil"
+    user_badge = auth.get("spotify_user") or os.environ.get("USER", "user")
     return {
         "status": "STOPPED",
         "is_running": False,
         "source": state.get("active_source", "spotify"),
         "source_name": "OmaPlayer",
         "title": "Müzik Çalmıyor",
-        "artist": f"Hesap: {user_badge} (Premium)",
+        "artist": f"Hesap: {sanitize_mpris_str(user_badge, 20)} (Premium)",
         "album": "",
         "codec": "None",
         "bitrate_kbps": 320,
@@ -311,13 +332,13 @@ def control_playback(action):
     if sp_data and sp_data.get("service"):
         srv = sp_data["service"]
         if action == "play_pause":
-            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlayPause"], capture_output=True)
+            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlayPause"], capture_output=True, env=CLEAN_ENV)
             return True
         elif action == "next":
-            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Next"], capture_output=True)
+            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Next"], capture_output=True, env=CLEAN_ENV)
             return True
         elif action == "prev":
-            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Previous"], capture_output=True)
+            subprocess.run(["/usr/bin/busctl", "--user", "call", srv, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Previous"], capture_output=True, env=CLEAN_ENV)
             return True
 
     return False
@@ -332,7 +353,7 @@ def list_local_music():
             if f.lower().endswith((".mp3", ".flac", ".wav", ".m4a", ".ogg", ".opus")):
                 f_path = os.path.join(root, f)
                 tracks.append({
-                    "name": sanitize_str(f[:40], 40),
+                    "name": sanitize_mpris_str(f[:40], 40),
                     "path": f_path
                 })
             if len(tracks) >= 50:
@@ -377,7 +398,20 @@ def main():
         sys.exit(0)
 
     info = get_playback_info()
-    print(json.dumps(info))
+    raw_json = json.dumps(info)
+    if len(raw_json.encode("utf-8")) > MAX_BYTE_LIMIT:
+        raw_json = json.dumps({
+            "status": "STOPPED",
+            "is_running": False,
+            "source": "None",
+            "source_name": "OmaPlayer",
+            "title": "Müzik Çalmıyor",
+            "artist": "OmaPlayer",
+            "album": "",
+            "volume_pct": 0,
+            "service": "None"
+        })
+    print(raw_json)
 
 if __name__ == "__main__":
     main()
