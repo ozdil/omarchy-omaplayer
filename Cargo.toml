@@ -1,0 +1,31 @@
+[package]
+name = "omaplayer"
+version = "1.1.0"
+edition = "2021"
+authors = ["Ozan Özdil <ozan@pm.me>"]
+description = "High-performance, memory-safe audio engine and terminal workstation for Omarchy Linux"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+libc = "0.2"
+
+[[bin]]
+name = "omaplayer-engine"
+path = "src/bin/engine.rs"
+
+[[bin]]
+name = "omaplayer-dashboard"
+path = "src/bin/dashboard.rs"
+
+[[bin]]
+name = "omaplayer-status"
+path = "src/bin/status.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

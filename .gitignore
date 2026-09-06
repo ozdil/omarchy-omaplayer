@@ -1,2 +1,5 @@
+/target
+*.pkg.tar.*
+pkg/
 __pycache__/
 *.pyc
