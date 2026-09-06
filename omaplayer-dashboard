@@ -18,6 +18,40 @@ if not os.path.isdir(RUNTIME_DIR):
 os.makedirs(RUNTIME_DIR, mode=0o700, exist_ok=True)
 SOCKET_PATH = os.path.join(RUNTIME_DIR, "omaplayer_mpv.sock")
 
+ANSI_ESCAPE_RE = re.compile(
+    r"""
+    \x1b (?:
+        \[ [0-?]* [ -/]* [@-~]
+      | \] (?:[^\x07\x1b]|\x1b[^\\])* (?:\x07|\x1b\\)
+      | [PX^_] .*? (?:\x1b\\)
+      | [NOG]
+      | .
+    )
+    """,
+    re.VERBOSE
+)
+BIDI_CONTROL_RE = re.compile(r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+C0_C1_DEL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+MARKUP_DELIM_RE = re.compile(r"[<>&`'\"\\]")
+
+def sanitize_terminal_str(s, max_len=64, max_bytes=256):
+    if not s:
+        return ""
+    # 1. Enforce strict byte limit bound
+    raw_bytes = str(s).encode("utf-8", errors="ignore")[:max_bytes]
+    val = raw_bytes.decode("utf-8", errors="ignore")
+    # 2. Strip all ANSI / VT escape sequences (OSC, CSI, DCS, APC, PM, etc.)
+    val = ANSI_ESCAPE_RE.sub("", val)
+    # 3. Strip C0/C1 controls, DEL, and ESC
+    val = C0_C1_DEL_RE.sub("", val)
+    # 4. Strip Unicode Bidi controls
+    val = BIDI_CONTROL_RE.sub("", val)
+    # 5. Strip markup delimiters, quotes, ampersands, backslashes
+    val = MARKUP_DELIM_RE.sub("", val)
+    # 6. Collapse whitespace and trim
+    val = re.sub(r"\s+", " ", val).strip()
+    return val[:max_len]
+
 def get_auth_data():
     try:
         if os.path.isfile(AUTH_FILE):
@@ -73,29 +107,31 @@ def get_playback_metrics():
         idle = send_mpv_direct(["get_property", "idle-active"])
         if idle is False:
             paused = bool(send_mpv_direct(["get_property", "pause"]))
-            media_title = send_mpv_direct(["get_property", "media-title"]) or "Terminal Audio"
+            raw_media_title = send_mpv_direct(["get_property", "media-title"]) or "Terminal Audio"
+            media_title = sanitize_terminal_str(raw_media_title, 64)
             pos = send_mpv_direct(["get_property", "time-pos"]) or 0
             dur = send_mpv_direct(["get_property", "duration"]) or 0
             vol = send_mpv_direct(["get_property", "volume"]) or 85
 
             raw_codec = str(send_mpv_direct(["get_property", "audio-codec-name"]) or "opus").upper()
+            clean_codec = sanitize_terminal_str(raw_codec, 16)
             raw_bitrate = send_mpv_direct(["get_property", "audio-bitrate"]) or 0
             raw_sr = send_mpv_direct(["get_property", "audio-params/samplerate"]) or 48000
 
             bitrate_kbps = int(raw_bitrate / 1000) if raw_bitrate else 320
             sr_khz = f"{float(raw_sr) / 1000:.1f} kHz"
-            is_lossless = raw_codec in ("FLAC", "WAV", "ALAC", "PCM_S16LE", "PCM_S24LE", "PCM_S32LE")
+            is_lossless = clean_codec in ("FLAC", "WAV", "ALAC", "PCM_S16LE", "PCM_S24LE", "PCM_S32LE")
 
             state = get_saved_state()
-            source = state.get("active_source", "spotify")
+            source = sanitize_terminal_str(state.get("active_source", "spotify"), 20)
             auth = get_auth_data()
 
             if is_lossless:
-                quality_label = f"LOSSLESS ({raw_codec} 24-bit • {sr_khz})"
+                quality_label = f"LOSSLESS ({clean_codec} 24-bit • {sr_khz})"
             elif source == "spotify" or auth.get("spotify_premium"):
                 quality_label = f"SPOTIFY PREMIUM: 320 kbps ({sr_khz})"
             else:
-                quality_label = f"{bitrate_kbps} kbps • {raw_codec} ({sr_khz})"
+                quality_label = f"{bitrate_kbps} kbps • {clean_codec} ({sr_khz})"
 
             src_names = {
                 "spotify": "Spotify Premium",
@@ -105,18 +141,21 @@ def get_playback_metrics():
                 "local": "Yerel Müzik"
             }
 
+            clean_title = sanitize_terminal_str(state.get("current_title") or media_title, 64)
+            clean_artist = sanitize_terminal_str(state.get("current_artist") or "Spotify Premium CLI", 64)
+
             return {
                 "status": "PAUSED" if paused else "PLAYING",
                 "is_running": True,
                 "source": source,
-                "source_name": src_names.get(source, "OmaPlayer"),
-                "title": state.get("current_title") or media_title,
-                "artist": state.get("current_artist") or "Spotify Premium CLI",
-                "codec": raw_codec,
+                "source_name": sanitize_terminal_str(src_names.get(source, "OmaPlayer"), 32),
+                "title": clean_title,
+                "artist": clean_artist,
+                "codec": clean_codec,
                 "bitrate_kbps": bitrate_kbps,
                 "sample_rate": sr_khz,
                 "is_lossless": is_lossless,
-                "quality_label": quality_label,
+                "quality_label": sanitize_terminal_str(quality_label, 64),
                 "position_sec": int(float(pos)) if pos else 0,
                 "length_sec": int(float(dur)) if dur else 0,
                 "volume_pct": int(float(vol)) if vol else 85
@@ -124,13 +163,14 @@ def get_playback_metrics():
 
     state = get_saved_state()
     auth = get_auth_data()
+    user_str = sanitize_terminal_str(auth.get("spotify_user") or "ozdil", 20)
     return {
         "status": "STOPPED",
         "is_running": False,
-        "source": state.get("active_source", "spotify"),
+        "source": sanitize_terminal_str(state.get("active_source", "spotify"), 20),
         "source_name": "OmaPlayer",
-        "title": "Müzik Çalmıyor",
-        "artist": "ozdil (Spotify Premium)",
+        "title": sanitize_terminal_str(state.get("current_title") or "Müzik Çalmıyor", 64),
+        "artist": sanitize_terminal_str(state.get("current_artist") or f"{user_str} (Spotify Premium)", 64),
         "codec": "None",
         "bitrate_kbps": 320,
         "sample_rate": "48.0 kHz",
@@ -198,23 +238,25 @@ def render_volume_bar(vol, width=12):
     return f"Ses: %{v:<3} [{bar}]"
 
 def strip_ansi(s):
-    return re.sub(r'\x1b\[[0-9;]*m', '', str(s))
+    return ANSI_ESCAPE_RE.sub('', str(s))
 
 def make_row(content, width):
-    clean = strip_ansi(content)
+    safe_content = BIDI_CONTROL_RE.sub('', C0_C1_DEL_RE.sub('', str(content)))
+    clean = strip_ansi(safe_content)
     vis_len = len(clean)
     if vis_len > width:
         return "│ " + clean[:width] + " │"
     else:
         padding = " " * (width - vis_len)
-        return "│ " + content + padding + " │"
+        return "│ " + safe_content + padding + " │"
 
 def pad_cell(content, width):
-    clean = strip_ansi(content)
+    safe_content = BIDI_CONTROL_RE.sub('', C0_C1_DEL_RE.sub('', str(content)))
+    clean = strip_ansi(safe_content)
     vis_len = len(clean)
     if vis_len > width:
         return clean[:width]
-    return content + (" " * (width - vis_len))
+    return safe_content + (" " * (width - vis_len))
 
 def get_key():
     if not sys.stdin.isatty():
@@ -252,7 +294,8 @@ def search_dialog():
     print("│  \033[1;37mOMAPLAYER ARAMA • Şarkı veya Sanatçı Yazın\033[0m              │")
     print("\033[1;36m└──────────────────────────────────────────────────────────┘\033[0m\n")
     try:
-        q = input("  Arama: ").strip()
+        raw_q = input("  Arama: ").strip()
+        q = sanitize_terminal_str(raw_q, 60)
         if q:
             print(f"\n  \033[1;32m'{q}' aranıyor ve başlatılıyor...\033[0m")
             run_action_fast(["--search", q])
@@ -321,7 +364,7 @@ def account_dialog():
     print("\033[1;36m┌──────────────────────────────────────────────────────────┐\033[0m")
     print("│  \033[1;37mHESAP & ÜYELİK AYARLARI\033[0m                                 │")
     print("\033[1;36m├──────────────────────────────────────────────────────────┤\033[0m")
-    u_str = auth.get("spotify_user") or "ozdil"
+    u_str = sanitize_terminal_str(auth.get("spotify_user") or "ozdil", 20)
     p_str = "Aktif (320k)" if auth.get("spotify_premium") else "Kapalı"
     print(f"│  Spotify: {u_str:<20} Premium: {p_str:<15} │")
     print("\033[1;36m├──────────────────────────────────────────────────────────┤\033[0m")
@@ -332,7 +375,7 @@ def account_dialog():
     try:
         c = input("  Seçiminiz [1-3]: ").strip()
         if c == "1":
-            u = input("\n  Spotify Kullanıcı Adı / E-posta: ").strip()
+            u = sanitize_terminal_str(input("\n  Spotify Kullanıcı Adı / E-posta: ").strip(), 40)
             if u:
                 auth["spotify_user"] = u
                 auth["spotify_premium"] = True
@@ -360,17 +403,16 @@ def render_compact_view(data, auth, wave_frames, frame_idx, cols):
 
     status = data.get("status", "STOPPED")
     is_playing = (status == "PLAYING")
-    title = data.get("title", "Müzik Çalmıyor")
-    artist = data.get("artist", "")
-    raw_src = data.get("source_name", "OmaPlayer")
-    src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
-    quality = data.get("quality_label", "Standart")
-    is_lossless = data.get("is_lossless", False)
+    title = sanitize_terminal_str(data.get("title", "Müzik Çalmıyor"), 40)
+    artist = sanitize_terminal_str(data.get("artist", ""), 35)
+    src_label = sanitize_terminal_str(data.get("source_name", "OmaPlayer"), 16)
+    quality = sanitize_terminal_str(data.get("quality_label", "Standart"), 40)
+    is_lossless = bool(data.get("is_lossless", False))
 
     pos = data.get("position_sec", 0)
     length = data.get("length_sec", 0)
 
-    track_full = f"{title} • {artist}" if artist else title
+    track_full = sanitize_terminal_str(f"{title} • {artist}" if artist else title, inner_w - 4)
     if is_playing:
         st_badge = "\033[1;32m▶ CALIYOR\033[0m"
         wave = wave_frames[frame_idx % len(wave_frames)]
@@ -438,19 +480,19 @@ def render_fullscreen_view(data, auth, wave_frames, frame_idx, cols):
 
     status = data.get("status", "STOPPED")
     is_playing = (status == "PLAYING")
-    title = data.get("title", "Müzik Çalmıyor")
-    artist = data.get("artist", "")
-    raw_src = data.get("source_name", "OmaPlayer")
-    src_label = re.sub(r'[^\x00-\x7F]+', '', raw_src).strip() or "OmaPlayer"
+    title = sanitize_terminal_str(data.get("title", "Müzik Çalmıyor"), 50)
+    artist = sanitize_terminal_str(data.get("artist", ""), 45)
+    src_label = sanitize_terminal_str(data.get("source_name", "OmaPlayer"), 24)
     pos = data.get("position_sec", 0)
     length = data.get("length_sec", 0)
     vol = data.get("volume_pct", 85)
-    codec = data.get("codec", "OPUS")
-    sr = data.get("sample_rate", "48.0 kHz")
+    codec = sanitize_terminal_str(data.get("codec", "OPUS"), 16)
+    sr = sanitize_terminal_str(data.get("sample_rate", "48.0 kHz"), 16)
     bitrate = data.get("bitrate_kbps", 320)
-    is_lossless = data.get("is_lossless", False)
+    is_lossless = bool(data.get("is_lossless", False))
+    auth_user = sanitize_terminal_str(auth.get("spotify_user") or "ozdil", 20)
 
-    track_full = f"{title} • {artist}" if artist else title
+    track_full = sanitize_terminal_str(f"{title} • {artist}" if artist else title, w_mid - 4)
     st_text = "\033[1;32m▶ CALIYOR (Hi-Res Engine)\033[0m" if is_playing else ("\033[1;33m⏸ DURDURULDU\033[0m" if status == "PAUSED" else "\033[0;90m■ BEKLEMEDE\033[0m")
 
     # Multi-tier wave spectrum
@@ -501,7 +543,7 @@ def render_fullscreen_view(data, auth, wave_frames, frame_idx, cols):
     # Row 5
     r5_1 = " \033[1;36m[5]\033[0m Hesap & Üyelik Girişi"
     r5_2 = f" \033[1;36m{wave1[:w_mid-4]}\033[0m"
-    r5_3 = f" Oturum : ozdil (Premium)"
+    r5_3 = f" Oturum : {auth_user} (Premium)"
     buf.append(f"│{pad_cell(r5_1, w_left)}│{pad_cell(r5_2, w_mid)}│{pad_cell(r5_3, w_right)}│")
 
     # Row 6

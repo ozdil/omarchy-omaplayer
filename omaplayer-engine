@@ -51,15 +51,39 @@ RADIO_STREAMS = {
     }
 }
 
-def sanitize_mpris_str(s, max_len=60):
+ANSI_ESCAPE_RE = re.compile(
+    r"""
+    \x1b (?:
+        \[ [0-?]* [ -/]* [@-~]
+      | \] (?:[^\x07\x1b]|\x1b[^\\])* (?:\x07|\x1b\\)
+      | [PX^_] .*? (?:\x1b\\)
+      | [NOG]
+      | .
+    )
+    """,
+    re.VERBOSE
+)
+BIDI_CONTROL_RE = re.compile(r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+C0_C1_DEL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+MARKUP_DELIM_RE = re.compile(r"[<>&`'\"\\]")
+
+def sanitize_mpris_str(s, max_len=60, max_bytes=256):
     if not s:
         return ""
-    val = str(s)
-    # Strip HTML/XML tags
+    # 1. Enforce strict byte limit bound
+    raw_bytes = str(s).encode("utf-8", errors="ignore")[:max_bytes]
+    val = raw_bytes.decode("utf-8", errors="ignore")
+    # 2. Strip HTML/XML tags
     val = re.sub(r'<[^>]*>', '', val)
-    # Strip markup delimiters, quotes, ampersands, backslashes, and control characters
-    val = re.sub(r'[\x00-\x1f\x7f-\x9f<>&`\'"\\]', '', val)
-    # Collapse whitespace
+    # 3. Strip all ANSI / VT escape sequences (OSC, CSI, DCS, APC, PM, etc.)
+    val = ANSI_ESCAPE_RE.sub("", val)
+    # 4. Strip C0/C1 controls, DEL, and ESC
+    val = C0_C1_DEL_RE.sub("", val)
+    # 5. Strip Unicode Bidi controls
+    val = BIDI_CONTROL_RE.sub("", val)
+    # 6. Strip markup delimiters, quotes, ampersands, backslashes
+    val = MARKUP_DELIM_RE.sub("", val)
+    # 7. Collapse whitespace and trim
     val = re.sub(r'\s+', ' ', val).strip()
     return val[:max_len]
 
