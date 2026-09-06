@@ -1,15 +1,21 @@
 [package]
 name = "omaplayer"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["Ozan Özdil <ozan@pm.me>"]
-description = "High-performance, memory-safe audio engine and terminal workstation for Omarchy Linux"
+description = "High-performance, 100% pure Rust desktop music workstation and GUI player for Omarchy Linux"
 license = "MIT"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libc = "0.2"
+eframe = "0.36.1"
+egui_extras = "0.36.1"
+
+[[bin]]
+name = "omaplayer-gui"
+path = "src/bin/gui.rs"
 
 [[bin]]
 name = "omaplayer-engine"

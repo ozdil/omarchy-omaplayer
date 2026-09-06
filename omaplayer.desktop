@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=OmaPlayer
+GenericName=Müzik İstasyonu
+Comment=100% Pure Rust Desktop Audio Workstation & Hi-Fi Player
+Exec=omaplayer-gui
+Icon=multimedia-audio-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;spotify;audio;player;streaming;radio;
+StartupNotify=true
+StartupWMClass=OmaPlayer

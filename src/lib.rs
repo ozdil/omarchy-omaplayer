@@ -8,6 +8,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+pub mod gui;
+pub mod services;
 
 pub const MAX_BYTE_LIMIT: usize = 65536;
 
@@ -332,6 +334,10 @@ pub fn save_state(state: &SavedState) {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AuthData {
     pub spotify_user: String,
+    #[serde(default)]
+    pub spotify_email: String,
+    #[serde(default)]
+    pub spotify_id: String,
     pub spotify_premium: bool,
     #[serde(default)]
     pub spotify_client_id: String,
@@ -347,9 +353,11 @@ pub struct AuthData {
 
 impl Default for AuthData {
     fn default() -> Self {
-        let cur_user = std::env::var("USER").unwrap_or_else(|_| "ozdil".to_string());
+        let cur_user = std::env::var("USER").unwrap_or_else(|_| "ozan".to_string());
         Self {
             spotify_user: cur_user,
+            spotify_email: String::new(),
+            spotify_id: String::new(),
             spotify_premium: true,
             spotify_client_id: String::new(),
             spotify_access_token: String::new(),
@@ -738,34 +746,74 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
         .unwrap_or(0);
 
     println!("  \x1b[1;32m✓\x1b[0m Spotify profil bilgileri sorgulanıyor (/v1/me)...");
-    let prof_output = Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "-H",
-            &format!("Authorization: Bearer {}", access_token),
-            "https://api.spotify.com/v1/me",
-        ])
-        .output();
-
-    let mut user_display = "Spotify User".to_string();
+    let mut user_display = String::new();
+    let mut user_email = String::new();
+    let mut user_id = String::new();
     let mut is_premium = true;
 
-    if let Ok(out) = prof_output {
-        let prof_str = String::from_utf8_lossy(&out.stdout);
-        if let Ok(p_json) = serde_json::from_str::<serde_json::Value>(&prof_str) {
-            if let Some(dn) = p_json.get("display_name").and_then(|v| v.as_str()) {
-                user_display = dn.to_string();
-            } else if let Some(id) = p_json.get("id").and_then(|v| v.as_str()) {
-                user_display = id.to_string();
+    for attempt in 0..3 {
+        let prof_output = Command::new("/usr/bin/curl")
+            .args([
+                "-s",
+                "-w", "\n%{http_code}",
+                "-H",
+                &format!("Authorization: Bearer {}", access_token),
+                "https://api.spotify.com/v1/me",
+            ])
+            .output();
+
+        if let Ok(out) = prof_output {
+            let prof_str = String::from_utf8_lossy(&out.stdout);
+            let trimmed = prof_str.trim_end();
+            let (body, status_code) = if let Some(idx) = trimmed.rfind('\n') {
+                let code_str = &trimmed[idx + 1..];
+                let code: u32 = code_str.parse().unwrap_or(0);
+                (&trimmed[..idx], code)
+            } else {
+                (trimmed, 0)
+            };
+
+            if status_code == 429 && attempt < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                continue;
             }
-            if let Some(prod) = p_json.get("product").and_then(|v| v.as_str()) {
-                is_premium = prod == "premium";
+
+            if let Ok(p_json) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(dn) = p_json.get("display_name").and_then(|v| v.as_str()) {
+                    if !dn.trim().is_empty() {
+                        user_display = dn.to_string();
+                    }
+                }
+                if let Some(em) = p_json.get("email").and_then(|v| v.as_str()) {
+                    user_email = em.to_string();
+                }
+                if let Some(id) = p_json.get("id").and_then(|v| v.as_str()) {
+                    user_id = id.to_string();
+                }
+                if let Some(prod) = p_json.get("product").and_then(|v| v.as_str()) {
+                    is_premium = prod == "premium";
+                }
+                break;
             }
+        }
+    }
+
+    if user_display.is_empty() {
+        if !user_email.is_empty() {
+            if let Some(prefix) = user_email.split('@').next() {
+                user_display = prefix.to_string();
+            }
+        } else if !user_id.is_empty() {
+            user_display = user_id.clone();
+        } else {
+            user_display = std::env::var("USER").unwrap_or_else(|_| "ozan".to_string());
         }
     }
 
     let mut auth = get_auth_data();
     auth.spotify_user = sanitize_terminal_str(&user_display, 40, 128);
+    auth.spotify_email = sanitize_terminal_str(&user_email, 64, 128);
+    auth.spotify_id = sanitize_terminal_str(&user_id, 64, 128);
     auth.spotify_premium = is_premium;
     auth.spotify_client_id = effective_client_id.to_string();
     auth.spotify_access_token = access_token;
@@ -927,11 +975,19 @@ pub fn play_query_stream(query: &str, source: &str) -> bool {
     }
     let ytdl_url = format!("ytdl://ytsearch1:{}", clean_q);
     let artist = if source == "spotify" {
-        "Spotify Premium CLI"
+        "Spotify"
     } else {
         "YouTube Music"
     };
     play_stream(&ytdl_url, &clean_q, artist, source)
+}
+
+pub fn play_track_stream(title: &str, artist: &str, source: &str) -> bool {
+    let clean_t = sanitize_terminal_str(title, 50, 256);
+    let clean_a = sanitize_terminal_str(artist, 40, 256);
+    let query = format!("{} {}", clean_t, clean_a);
+    let ytdl_url = format!("ytdl://ytsearch1:{}", query);
+    play_stream(&ytdl_url, &clean_t, &clean_a, source)
 }
 
 pub fn control_playback(action: &str) -> bool {
@@ -995,6 +1051,15 @@ pub fn control_playback(action: &str) -> bool {
         }
     }
     false
+}
+
+pub fn set_volume(vol: u32) -> bool {
+    let clamped = vol.clamp(0, 100);
+    send_mpv_command(&[
+        serde_json::Value::from("set_property"),
+        serde_json::Value::from("volume"),
+        serde_json::Value::from(clamped),
+    ]).is_some()
 }
 
 // ==============================================================================
@@ -1248,7 +1313,7 @@ pub fn get_playback_info() -> PlaybackInfo {
             let clean_artist = if !state.current_artist.is_empty() {
                 sanitize_terminal_str(&state.current_artist, 40, 256)
             } else {
-                "Spotify Premium CLI".to_string()
+                source_name.to_string()
             };
 
             return PlaybackInfo {
