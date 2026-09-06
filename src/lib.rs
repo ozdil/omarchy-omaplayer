@@ -610,11 +610,12 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
 
     let _ = Command::new("xdg-open").arg(&auth_url).spawn();
 
-    println!("  \x1b[1;33m[3/3]\x1b[0m Tarayıcıdan Spotify onayı bekleniyor (Zaman aşımı: 120 sn)...");
+    println!("  \x1b[1;33m[3/3]\x1b[0m Tarayıcıdan Spotify onayı bekleniyor (Zaman aşımı: 10 dk)...");
+    println!("  \x1b[2m      (İptal etmek için terminalde Ctrl+C yapabilirsiniz)\x1b[0m");
     let _ = std::io::stdout().flush();
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(120);
+    let timeout = Duration::from_secs(600);
     let mut auth_code = None;
 
     while start_time.elapsed() < timeout {
@@ -626,6 +627,13 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
                 let req_text = String::from_utf8_lossy(&buf[..n]);
 
                 if let Some(first_line) = req_text.lines().next() {
+                    if first_line.contains("/favicon.ico") {
+                        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        let _ = stream.write_all(resp.as_bytes());
+                        let _ = stream.flush();
+                        continue;
+                    }
+
                     if first_line.contains("/login") || first_line.contains("/callback") {
                         if let Some(err_val) = extract_query_param(first_line, "error") {
                             let resp_body = format!(
@@ -634,11 +642,13 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
                             );
                             let resp = format!(
                                 "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
-                                resp_body.len(),
+                                resp_body.as_bytes().len(),
                                 resp_body
                             );
                             let _ = stream.write_all(resp.as_bytes());
                             let _ = stream.flush();
+                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                            std::thread::sleep(Duration::from_millis(150));
                             return Err(format!("Spotify yetkilendirmesi iptal edildi / reddedildi: {}", err_val));
                         }
 
@@ -647,11 +657,13 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
                             let resp_body = "<!DOCTYPE html><html lang=\"tr\"><head><meta charset=\"utf-8\"><title>OmaPlayer • Başarılı</title><style>body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:36px 32px;max-width:440px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,0.6);}.badge{display:inline-block;background:#238636;color:#fff;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;margin-bottom:18px;}h1{color:#58a6ff;margin:0 0 12px 0;font-size:22px;}p{color:#8b949e;font-size:14px;line-height:1.6;margin:0 0 20px 0;}.btn{display:inline-block;background:#21262d;color:#58a6ff;border:1px solid #30363d;padding:8px 18px;border-radius:6px;font-size:13px;text-decoration:none;cursor:pointer;}</style></head><body><div class=\"box\"><div class=\"badge\">✓ Spotify Bağlandı</div><h1>Yetkilendirme Başarılı</h1><p>Spotify hesabınız OmaPlayer terminal istasyonuna başarıyla bağlandı.<br>Bu sekmeyi güvenle kapatabilirsiniz.</p><button class=\"btn\" onclick=\"window.close()\">Sekmeyi Kapat</button></div></body></html>";
                             let resp = format!(
                                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
-                                resp_body.len(),
+                                resp_body.as_bytes().len(),
                                 resp_body
                             );
                             let _ = stream.write_all(resp.as_bytes());
                             let _ = stream.flush();
+                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                            std::thread::sleep(Duration::from_millis(150));
                             break;
                         }
                     }
@@ -667,15 +679,10 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
     }
 
     let code = auth_code.ok_or_else(|| {
-        "Yetkilendirme zaman aşımına uğradı (120 sn içinde tarayıcıdan onay alınamadı).".to_string()
+        "Yetkilendirme zaman aşımına uğradı (tarayıcıdan beklenen süre içinde onay alınamadı).".to_string()
     })?;
 
     println!("\n  \x1b[1;32m✓\x1b[0m Onay kodu alındı. Güvenli erişim anahtarları talep ediliyor...");
-
-    let post_body = format!(
-        "grant_type=authorization_code&client_id={}&code={}&redirect_uri={}&code_verifier={}",
-        effective_client_id, code, redirect_encoded, verifier
-    );
 
     let token_output = Command::new("/usr/bin/curl")
         .args([
@@ -683,10 +690,16 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
             "-X",
             "POST",
             "https://accounts.spotify.com/api/token",
-            "-H",
-            "Content-Type: application/x-www-form-urlencoded",
-            "-d",
-            &post_body,
+            "--data-urlencode",
+            "grant_type=authorization_code",
+            "--data-urlencode",
+            &format!("client_id={}", effective_client_id),
+            "--data-urlencode",
+            &format!("code={}", code),
+            "--data-urlencode",
+            &format!("redirect_uri={}", redirect_uri),
+            "--data-urlencode",
+            &format!("code_verifier={}", verifier),
         ])
         .output()
         .map_err(|e| format!("Curl token isteği hatası: {}", e))?;
@@ -697,6 +710,9 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
 
     if let Some(err_desc) = token_val.get("error_description").and_then(|v| v.as_str()) {
         return Err(format!("Spotify Token Reddi: {}", err_desc));
+    }
+    if let Some(err) = token_val.get("error").and_then(|v| v.as_str()) {
+        return Err(format!("Spotify Token Hatası: {}", err));
     }
 
     let access_token = token_val
@@ -765,21 +781,18 @@ pub fn refresh_spotify_token(auth: &mut AuthData) -> Result<(), String> {
         return Err("Yenilenecek Spotify refresh_token veya client_id yok.".to_string());
     }
 
-    let post_body = format!(
-        "grant_type=refresh_token&refresh_token={}&client_id={}",
-        auth.spotify_refresh_token, auth.spotify_client_id
-    );
-
     let output = Command::new("/usr/bin/curl")
         .args([
             "-s",
             "-X",
             "POST",
             "https://accounts.spotify.com/api/token",
-            "-H",
-            "Content-Type: application/x-www-form-urlencoded",
-            "-d",
-            &post_body,
+            "--data-urlencode",
+            "grant_type=refresh_token",
+            "--data-urlencode",
+            &format!("refresh_token={}", auth.spotify_refresh_token),
+            "--data-urlencode",
+            &format!("client_id={}", auth.spotify_client_id),
         ])
         .output()
         .map_err(|e| format!("Token yenileme isteği başarısız: {}", e))?;

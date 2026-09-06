@@ -59,24 +59,11 @@ Panel {
 
   Process {
     id: launchProc
-    onExited: function(exitCode) {
-      launchDeadlineTimer.stop()
-    }
-  }
-
-  Timer {
-    id: launchDeadlineTimer
-    interval: 5000
-    repeat: false
-    onTriggered: {
-      if (launchProc.running) launchProc.kill()
-    }
   }
 
   Component.onDestruction: {
     if (statusProc.running) statusProc.kill()
     if (actionProc.running) actionProc.kill()
-    if (launchProc.running) launchProc.kill()
   }
 
   Component.onCompleted: {
@@ -91,11 +78,14 @@ Panel {
   }
 
   function launchDashboard() {
-    root.close()
     var dashPath = root.resolveDashPath()
-    launchProc.command = ["omarchy-launch-floating-terminal-with-presentation", dashPath]
-    launchDeadlineTimer.restart()
-    launchProc.running = true
+    if (root.bar && typeof root.bar.run === "function") {
+      root.bar.run("omarchy-launch-floating-terminal-with-presentation " + dashPath)
+    } else {
+      launchProc.command = ["omarchy-launch-floating-terminal-with-presentation", dashPath]
+      launchProc.running = true
+    }
+    root.close()
   }
 
   Timer {

@@ -577,7 +577,8 @@ fn account_dialog(guard: &mut RawModeGuard) {
                     DEFAULT_SPOTIFY_CLIENT_ID.to_string()
                 };
 
-                println!("  \x1b[1;32m✓\x1b[0m OmaPlayer resmi entegrasyonu hazırlandı.");
+                println!("  \x1b[1;32m✓\x1b[0m OmaPlayer güvenli entegrasyonu hazırlandı.");
+                println!("  \x1b[2m      (Açılan Spotify sayfasında açık kaynaklı istemci kimliği 'ncspot' görünecektir.)\x1b[0m");
                 match start_spotify_oauth(&client_id) {
                     Ok(new_auth) => {
                         println!("\n  \x1b[1;32m✓ SPOTIFY BAŞARIYLA BAĞLANDI!\x1b[0m");
