@@ -10,6 +10,9 @@ Panel {
   moduleName: "ozdil.omaplayer"
   ipcTarget: "ozdil.omaplayer"
 
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
   property string trackTitle: "Müzik Çalmıyor"
   property string trackArtist: "OmaPlayer"
   property string sourceName: "Evrensel Müzik"
@@ -22,9 +25,17 @@ Panel {
     return s.slice(0, maxLen || 64)
   }
 
+  function resolveEnginePath() {
+    return Qt.resolvedUrl("omaplayer-engine").toString().replace(/^file:\/\//, "")
+  }
+
+  function resolveDashPath() {
+    return Qt.resolvedUrl("omaplayer-dashboard").toString().replace(/^file:\/\//, "")
+  }
+
   Process {
     id: statusProc
-    command: [Qt.resolvedUrl("omaplayer-engine").toString().replace(/^file:\/\//, ""), "--json"]
+    command: [root.resolveEnginePath(), "--json"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -68,8 +79,12 @@ Panel {
     if (launchProc.running) launchProc.kill()
   }
 
+  Component.onCompleted: {
+    if (!statusProc.running) statusProc.running = true
+  }
+
   function sendCmd(arg) {
-    var eng = Qt.resolvedUrl("omaplayer-engine").toString().replace(/^file:\/\//, "")
+    var eng = root.resolveEnginePath()
     actionProc.command = [eng, arg]
     actionProc.running = true
     refreshTimer.restart()
@@ -77,7 +92,7 @@ Panel {
 
   function launchDashboard() {
     root.close()
-    var dashPath = Qt.resolvedUrl("omaplayer-dashboard").toString().replace(/^file:\/\//, "")
+    var dashPath = root.resolveDashPath()
     launchProc.command = ["omarchy-launch-floating-terminal-with-presentation", dashPath]
     launchDeadlineTimer.restart()
     launchProc.running = true
@@ -102,22 +117,23 @@ Panel {
     }
   }
 
-  BarIconButton {
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰎆 " + (root.isPlaying ? root.trackTitle.slice(0, 16) : "Müzik")
-    color: root.isPlaying ? "#a855f7" : "#94a3b8"
-    slotSize: Style.bar.statusSlot
+    text: root.isPlaying ? ("󰎆 " + root.trackTitle.slice(0, 18)) : "󰎆 OmaPlayer"
+    foreground: root.isPlaying ? (Color.accent || "#00ff66") : (root.bar ? root.bar.foreground : Color.foreground)
     tooltipText: "OmaPlayer: " + root.trackTitle + " (" + root.sourceName + ")"
-    onPressed: root.toggle()
+    onPressed: function(b) { root.toggle() }
   }
 
   KeyboardPanel {
     id: panel
     anchorItem: button
     owner: root
-    width: 460
+    bar: root.bar
+    open: root.opened
+    contentWidth: panel.fittedContentWidth(Style.space(460))
     contentHeight: panel.fittedContentHeight(mainCol.implicitHeight)
 
     Column {
@@ -132,25 +148,30 @@ Panel {
         width: parent.width
         Text {
           textFormat: Text.PlainText
-          text: "🎵 OmaPlayer • Müzik Merkezi"
+          text: "🎵 OmaPlayer • Müzik & Radyo"
           font.pixelSize: Style.font.title
           font.bold: true
-          color: root.bar ? root.bar.foreground : "#ffffff"
+          color: root.bar ? root.bar.foreground : Color.foreground
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
           Layout.fillWidth: true
         }
 
         Rectangle {
-          width: 90
-          height: 22
-          radius: 11
-          color: root.isPlaying ? "#9333ea" : "#334155"
+          height: Style.space(20)
+          width: statusBadgeText.implicitWidth + Style.space(14)
+          radius: Style.space(10)
+          color: root.isPlaying ? Qt.rgba(0.0, 1.0, 0.4, 0.16) : Qt.rgba(0.5, 0.5, 0.5, 0.12)
+          border.color: root.isPlaying ? (Color.accent || "#00ff66") : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.8)
+          border.width: 1
+
           Text {
+            id: statusBadgeText
             textFormat: Text.PlainText
             anchors.centerIn: parent
             text: root.isPlaying ? "ÇALIYOR" : "DURDU"
             font.pixelSize: 9
             font.bold: true
-            color: "#ffffff"
+            color: root.isPlaying ? (Color.accent || "#00ff66") : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
           }
         }
       }
@@ -158,43 +179,43 @@ Panel {
       // Track Card
       Rectangle {
         width: parent.width
-        height: 64
-        radius: 8
-        color: "#0f172a"
-        border.color: "#1e293b"
+        height: Style.space(68)
+        radius: Style.cornerRadius
+        color: Qt.rgba(0, 0, 0, 0.25)
+        border.color: Qt.rgba(1, 1, 1, 0.08)
         border.width: 1
 
         RowLayout {
           anchors.fill: parent
-          anchors.margins: 10
-          spacing: 10
+          anchors.margins: Style.space(10)
+          spacing: Style.space(12)
 
           Text {
             textFormat: Text.PlainText
             text: "󰎆"
-            font.pixelSize: 28
-            color: "#c084fc"
+            font.pixelSize: Style.font.display
+            color: root.isPlaying ? (Color.accent || "#00ff66") : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
           }
 
           Column {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Style.space(2)
             Text {
               textFormat: Text.PlainText
               text: root.trackTitle
               font.bold: true
               font.pixelSize: Style.font.body
-              color: "#f8fafc"
+              color: root.bar ? root.bar.foreground : Color.foreground
               elide: Text.ElideRight
-              width: 320
+              width: parent.width
             }
             Text {
               textFormat: Text.PlainText
               text: root.trackArtist + " • " + root.sourceName
               font.pixelSize: Style.font.caption
-              color: "#94a3b8"
+              color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
               elide: Text.ElideRight
-              width: 320
+              width: parent.width
             }
           }
         }
@@ -203,7 +224,7 @@ Panel {
       // Playback Controls
       RowLayout {
         width: parent.width
-        spacing: 8
+        spacing: Style.space(8)
 
         Button {
           text: "⏮️ Önceki"
@@ -214,7 +235,7 @@ Panel {
         Button {
           text: root.isPlaying ? "⏸️ Duraklat" : "▶️ Oynat"
           Layout.fillWidth: true
-          color: "#9333ea"
+          selected: root.isPlaying
           onClicked: root.sendCmd("--play-pause")
         }
 
