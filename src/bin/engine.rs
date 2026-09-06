@@ -85,6 +85,27 @@ fn main() {
                 }
                 return;
             }
+            "--auth-spotify" => {
+                let client_id = if i + 1 < args.len() && !args[i + 1].starts_with("--") {
+                    args[i + 1].clone()
+                } else {
+                    let auth = omaplayer::get_auth_data();
+                    auth.spotify_client_id
+                };
+                if client_id.is_empty() {
+                    eprintln!("Hata: Client ID belirtilmedi. Örnek: omaplayer-engine --auth-spotify <CLIENT_ID>");
+                    return;
+                }
+                match omaplayer::start_spotify_oauth(&client_id) {
+                    Ok(a) => {
+                        println!("Spotify bağlantısı başarılı: {} (Premium: {})", a.spotify_user, a.spotify_premium);
+                    }
+                    Err(e) => {
+                        eprintln!("Spotify OAuth Hatası: {}", e);
+                    }
+                }
+                return;
+            }
             _ => {
                 i += 1;
             }

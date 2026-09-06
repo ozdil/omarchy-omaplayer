@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -332,6 +333,14 @@ pub fn save_state(state: &SavedState) {
 pub struct AuthData {
     pub spotify_user: String,
     pub spotify_premium: bool,
+    #[serde(default)]
+    pub spotify_client_id: String,
+    #[serde(default)]
+    pub spotify_access_token: String,
+    #[serde(default)]
+    pub spotify_refresh_token: String,
+    #[serde(default)]
+    pub spotify_token_expires_at: u64,
     pub yt_cookies: bool,
     pub qobuz_user: String,
 }
@@ -342,6 +351,10 @@ impl Default for AuthData {
         Self {
             spotify_user: cur_user,
             spotify_premium: true,
+            spotify_client_id: String::new(),
+            spotify_access_token: String::new(),
+            spotify_refresh_token: String::new(),
+            spotify_token_expires_at: 0,
             yt_cookies: false,
             qobuz_user: String::new(),
         }
@@ -372,6 +385,408 @@ pub fn save_auth_data(auth: &AuthData) {
         {
             let _ = file.write_all(json_str.as_bytes());
         }
+    }
+}
+
+// ==============================================================================
+// 2.1 SPOTIFY OAUTH 2.0 PKCE & CRYPTO UTILITIES (PURE RUST)
+// ==============================================================================
+
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+
+    let mut h0: u32 = 0x6a09e667;
+    let mut h1: u32 = 0xbb67ae85;
+    let mut h2: u32 = 0x3c6ef372;
+    let mut h3: u32 = 0xa54ff53a;
+    let mut h4: u32 = 0x510e527f;
+    let mut h5: u32 = 0x9b05688c;
+    let mut h6: u32 = 0x1f83d9ab;
+    let mut h7: u32 = 0x5be0cd19;
+
+    let bit_len = (data.len() as u64) * 8;
+    let mut padded = data.to_vec();
+    padded.push(0x80);
+    while (padded.len() % 64) != 56 {
+        padded.push(0x00);
+    }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in padded.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([chunk[4 * i], chunk[4 * i + 1], chunk[4 * i + 2], chunk[4 * i + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+
+        let mut a = h0;
+        let mut b = h1;
+        let mut c = h2;
+        let mut d = h3;
+        let mut e = h4;
+        let mut f = h5;
+        let mut g = h6;
+        let mut h = h7;
+
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h0 = h0.wrapping_add(a);
+        h1 = h1.wrapping_add(b);
+        h2 = h2.wrapping_add(c);
+        h3 = h3.wrapping_add(d);
+        h4 = h4.wrapping_add(e);
+        h5 = h5.wrapping_add(f);
+        h6 = h6.wrapping_add(g);
+        h7 = h7.wrapping_add(h);
+    }
+
+    let mut out = [0u8; 32];
+    out[0..4].copy_from_slice(&h0.to_be_bytes());
+    out[4..8].copy_from_slice(&h1.to_be_bytes());
+    out[8..12].copy_from_slice(&h2.to_be_bytes());
+    out[12..16].copy_from_slice(&h3.to_be_bytes());
+    out[16..20].copy_from_slice(&h4.to_be_bytes());
+    out[20..24].copy_from_slice(&h5.to_be_bytes());
+    out[24..28].copy_from_slice(&h6.to_be_bytes());
+    out[28..32].copy_from_slice(&h7.to_be_bytes());
+    out
+}
+
+pub fn base64url_encode(data: &[u8]) -> String {
+    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut res = String::new();
+    let mut i = 0;
+    while i < data.len() {
+        let b0 = data[i] as u32;
+        let b1 = if i + 1 < data.len() { data[i + 1] as u32 } else { 0 };
+        let b2 = if i + 2 < data.len() { data[i + 2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        res.push(CHARSET[((triple >> 18) & 0x3F) as usize] as char);
+        res.push(CHARSET[((triple >> 12) & 0x3F) as usize] as char);
+        if i + 1 < data.len() {
+            res.push(CHARSET[((triple >> 6) & 0x3F) as usize] as char);
+        }
+        if i + 2 < data.len() {
+            res.push(CHARSET[(triple & 0x3F) as usize] as char);
+        }
+        i += 3;
+    }
+    res
+}
+
+pub fn generate_code_verifier() -> String {
+    let mut buf = [0u8; 48];
+    if let Ok(mut f) = fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+    } else {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(12345);
+        let pid = std::process::id();
+        let seed = format!("{}:{}", now, pid);
+        let h = sha256(seed.as_bytes());
+        buf[..32].copy_from_slice(&h);
+    }
+    base64url_encode(&buf)
+}
+
+pub fn generate_code_challenge(verifier: &str) -> String {
+    let hash = sha256(verifier.as_bytes());
+    base64url_encode(&hash)
+}
+
+pub fn percent_decode(input: &str) -> String {
+    let mut out = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            out.push(b' ');
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+pub fn extract_query_param(req_line: &str, param: &str) -> Option<String> {
+    let path_and_query = req_line.split_whitespace().nth(1)?;
+    let query_str = path_and_query.split('?').nth(1)?;
+    for pair in query_str.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next()?;
+        let val = parts.next().unwrap_or("");
+        if key == param {
+            return Some(percent_decode(val));
+        }
+    }
+    None
+}
+
+pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
+    let client_id = client_id.trim();
+    if client_id.is_empty() {
+        return Err("Client ID boş olamaz.".to_string());
+    }
+
+    let verifier = generate_code_verifier();
+    let challenge = generate_code_challenge(&verifier);
+    let state = generate_code_verifier();
+    let state_slice = if state.len() >= 16 { &state[..16] } else { &state };
+    let redirect_encoded = "http%3A%2F%2F127.0.0.1%3A8888%2Fcallback";
+
+    let listener = TcpListener::bind("127.0.0.1:8888")
+        .map_err(|e| format!("127.0.0.1:8888 portu açılamadı: {}", e))?;
+    
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Sunucu modu ayarlanamadı: {}", e))?;
+
+    let scopes = "user-read-private user-read-email user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private user-library-read";
+    let scopes_encoded = scopes.replace(' ', "%20");
+
+    let auth_url = format!(
+        "https://accounts.spotify.com/authorize?response_type=code&client_id={}&scope={}&redirect_uri={}&code_challenge_method=S256&code_challenge={}&state={}",
+        client_id, scopes_encoded, redirect_encoded, challenge, state_slice
+    );
+
+    println!("\n  \x1b[1;36m[1/3]\x1b[0m Yerel yetkilendirme dinleyicisi hazır: http://127.0.0.1:8888/callback");
+    println!("  \x1b[1;36m[2/3]\x1b[0m Web tarayıcısında Spotify yetkilendirme sayfası açılıyor...");
+
+    let _ = Command::new("xdg-open").arg(&auth_url).spawn();
+
+    println!("  \x1b[1;33m[3/3]\x1b[0m Tarayıcıdan Spotify onayı bekleniyor (Zaman aşımı: 120 sn)...");
+    let _ = std::io::stdout().flush();
+
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(120);
+    let mut auth_code = None;
+
+    while start_time.elapsed() < timeout {
+        match listener.accept() {
+            Ok((mut stream, _addr)) => {
+                let mut buf = [0u8; 4096];
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req_text = String::from_utf8_lossy(&buf[..n]);
+
+                if let Some(first_line) = req_text.lines().next() {
+                    if first_line.contains("/callback") {
+                        if let Some(err_val) = extract_query_param(first_line, "error") {
+                            let resp_body = format!(
+                                "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>OmaPlayer • Hata</title><style>body{{background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}}.box{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;text-align:center;max-width:440px;}}h1{{color:#f85149;}}</style></head><body><div class=\"box\"><h1>Yetkilendirme Reddedildi</h1><p>Hata: {}</p></div></body></html>",
+                                err_val
+                            );
+                            let resp = format!(
+                                "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
+                                resp_body.len(),
+                                resp_body
+                            );
+                            let _ = stream.write_all(resp.as_bytes());
+                            let _ = stream.flush();
+                            return Err(format!("Spotify yetkilendirmesi iptal edildi / reddedildi: {}", err_val));
+                        }
+
+                        if let Some(code) = extract_query_param(first_line, "code") {
+                            auth_code = Some(code);
+                            let resp_body = "<!DOCTYPE html><html lang=\"tr\"><head><meta charset=\"utf-8\"><title>OmaPlayer • Başarılı</title><style>body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:36px 32px;max-width:440px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,0.6);}.badge{display:inline-block;background:#238636;color:#fff;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;margin-bottom:18px;}h1{color:#58a6ff;margin:0 0 12px 0;font-size:22px;}p{color:#8b949e;font-size:14px;line-height:1.6;margin:0 0 20px 0;}.btn{display:inline-block;background:#21262d;color:#58a6ff;border:1px solid #30363d;padding:8px 18px;border-radius:6px;font-size:13px;text-decoration:none;cursor:pointer;}</style></head><body><div class=\"box\"><div class=\"badge\">✓ Spotify Bağlandı</div><h1>Yetkilendirme Başarılı</h1><p>Spotify hesabınız OmaPlayer terminal istasyonuna başarıyla bağlandı.<br>Bu sekmeyi güvenle kapatabilirsiniz.</p><button class=\"btn\" onclick=\"window.close()\">Sekmeyi Kapat</button></div></body></html>";
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
+                                resp_body.len(),
+                                resp_body
+                            );
+                            let _ = stream.write_all(resp.as_bytes());
+                            let _ = stream.flush();
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(e) => {
+                return Err(format!("Ağ dinleme hatası: {}", e));
+            }
+        }
+    }
+
+    let code = auth_code.ok_or_else(|| {
+        "Yetkilendirme zaman aşımına uğradı (120 sn içinde tarayıcıdan onay alınamadı).".to_string()
+    })?;
+
+    println!("\n  \x1b[1;32m✓\x1b[0m Onay kodu alındı. Güvenli erişim anahtarları talep ediliyor...");
+
+    let post_body = format!(
+        "grant_type=authorization_code&client_id={}&code={}&redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback&code_verifier={}",
+        client_id, code, verifier
+    );
+
+    let token_output = Command::new("/usr/bin/curl")
+        .args([
+            "-s",
+            "-X",
+            "POST",
+            "https://accounts.spotify.com/api/token",
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded",
+            "-d",
+            &post_body,
+        ])
+        .output()
+        .map_err(|e| format!("Curl token isteği hatası: {}", e))?;
+
+    let token_json_str = String::from_utf8_lossy(&token_output.stdout);
+    let token_val: serde_json::Value = serde_json::from_str(&token_json_str)
+        .map_err(|_| format!("Geçersiz Spotify token yanıtı: {}", token_json_str))?;
+
+    if let Some(err_desc) = token_val.get("error_description").and_then(|v| v.as_str()) {
+        return Err(format!("Spotify Token Reddi: {}", err_desc));
+    }
+
+    let access_token = token_val
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Yanıtta access_token bulunamadı.".to_string())?
+        .to_string();
+
+    let refresh_token = token_val
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let expires_in = token_val
+        .get("expires_in")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3600);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    println!("  \x1b[1;32m✓\x1b[0m Spotify profil bilgileri sorgulanıyor (/v1/me)...");
+    let prof_output = Command::new("/usr/bin/curl")
+        .args([
+            "-s",
+            "-H",
+            &format!("Authorization: Bearer {}", access_token),
+            "https://api.spotify.com/v1/me",
+        ])
+        .output();
+
+    let mut user_display = "Spotify User".to_string();
+    let mut is_premium = true;
+
+    if let Ok(out) = prof_output {
+        let prof_str = String::from_utf8_lossy(&out.stdout);
+        if let Ok(p_json) = serde_json::from_str::<serde_json::Value>(&prof_str) {
+            if let Some(dn) = p_json.get("display_name").and_then(|v| v.as_str()) {
+                user_display = dn.to_string();
+            } else if let Some(id) = p_json.get("id").and_then(|v| v.as_str()) {
+                user_display = id.to_string();
+            }
+            if let Some(prod) = p_json.get("product").and_then(|v| v.as_str()) {
+                is_premium = prod == "premium";
+            }
+        }
+    }
+
+    let mut auth = get_auth_data();
+    auth.spotify_user = sanitize_terminal_str(&user_display, 40, 128);
+    auth.spotify_premium = is_premium;
+    auth.spotify_client_id = client_id.to_string();
+    auth.spotify_access_token = access_token;
+    auth.spotify_refresh_token = refresh_token;
+    auth.spotify_token_expires_at = now + expires_in;
+
+    save_auth_data(&auth);
+    Ok(auth)
+}
+
+pub fn refresh_spotify_token(auth: &mut AuthData) -> Result<(), String> {
+    if auth.spotify_refresh_token.is_empty() || auth.spotify_client_id.is_empty() {
+        return Err("Yenilenecek Spotify refresh_token veya client_id yok.".to_string());
+    }
+
+    let post_body = format!(
+        "grant_type=refresh_token&refresh_token={}&client_id={}",
+        auth.spotify_refresh_token, auth.spotify_client_id
+    );
+
+    let output = Command::new("/usr/bin/curl")
+        .args([
+            "-s",
+            "-X",
+            "POST",
+            "https://accounts.spotify.com/api/token",
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded",
+            "-d",
+            &post_body,
+        ])
+        .output()
+        .map_err(|e| format!("Token yenileme isteği başarısız: {}", e))?;
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let val: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|_| format!("Geçersiz Spotify token yanıtı: {}", json_str))?;
+
+    if let Some(at) = val.get("access_token").and_then(|v| v.as_str()) {
+        auth.spotify_access_token = at.to_string();
+        let exp = val.get("expires_in").and_then(|v| v.as_u64()).unwrap_or(3600);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        auth.spotify_token_expires_at = now + exp;
+        if let Some(rt) = val.get("refresh_token").and_then(|v| v.as_str()) {
+            auth.spotify_refresh_token = rt.to_string();
+        }
+        save_auth_data(auth);
+        Ok(())
+    } else {
+        Err(format!("Token yenilenemedi: {}", json_str))
     }
 }
 
