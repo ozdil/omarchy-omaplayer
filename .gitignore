@@ -3,3 +3,4 @@
 pkg/
 __pycache__/
 *.pyc
+*.d

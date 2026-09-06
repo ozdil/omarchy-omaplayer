@@ -266,9 +266,13 @@ pub fn dirs_home() -> Option<PathBuf> {
 }
 
 pub fn get_state_dir() -> PathBuf {
-    let p = dirs_home()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/share/omarchy/omaplayer");
+    let p = if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(xdg).join("omarchy/omaplayer")
+    } else {
+        dirs_home()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".local/share/omarchy/omaplayer")
+    };
     let _ = fs::create_dir_all(&p);
     if let Ok(meta) = fs::metadata(&p) {
         let mut perms = meta.permissions();
@@ -832,27 +836,39 @@ pub fn get_playback_info() -> PlaybackInfo {
     let auth = get_auth_data();
     let user_str = sanitize_terminal_str(&auth.spotify_user, 20, 64);
 
+    let clean_title = if !state.current_title.is_empty() {
+        sanitize_terminal_str(&state.current_title, 50, 256)
+    } else {
+        "Müzik Çalmıyor".to_string()
+    };
+
+    let clean_artist = if !state.current_artist.is_empty() {
+        sanitize_terminal_str(&state.current_artist, 40, 256)
+    } else if !user_str.is_empty() {
+        format!("{} • OmaPlayer", user_str)
+    } else {
+        "OmaPlayer • Müzik & Radyo".to_string()
+    };
+
+    let quality_label = if auth.spotify_premium {
+        "SPOTIFY PREMIUM: 320 kbps (Hazır)".to_string()
+    } else {
+        "OMAPLAYER HI-FI (Hazır)".to_string()
+    };
+
     PlaybackInfo {
         status: "STOPPED".to_string(),
         is_running: false,
         source: sanitize_terminal_str(&state.active_source, 20, 64),
         source_name: "OmaPlayer".to_string(),
-        title: if !state.current_title.is_empty() {
-            sanitize_terminal_str(&state.current_title, 50, 256)
-        } else {
-            "Müzik Çalmıyor".to_string()
-        },
-        artist: if !state.current_artist.is_empty() {
-            sanitize_terminal_str(&state.current_artist, 40, 256)
-        } else {
-            format!("{} (Spotify Premium)", user_str)
-        },
+        title: clean_title,
+        artist: clean_artist,
         album: String::new(),
         codec: "None".to_string(),
         bitrate_kbps: 320,
         sample_rate: "48.0 kHz".to_string(),
         is_lossless: false,
-        quality_label: "SPOTIFY PREMIUM: 320 kbps (Hazır)".to_string(),
+        quality_label,
         position_sec: 0,
         length_sec: 0,
         volume_pct: 0,

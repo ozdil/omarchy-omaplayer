@@ -211,7 +211,7 @@ Panel {
             }
             Text {
               textFormat: Text.PlainText
-              text: root.trackArtist + " • " + root.sourceName
+              text: (root.trackArtist && root.sourceName && root.trackArtist.indexOf(root.sourceName) < 0 && root.sourceName !== "OmaPlayer") ? (root.trackArtist + " • " + root.sourceName) : (root.trackArtist || root.sourceName)
               font.pixelSize: Style.font.caption
               color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
               elide: Text.ElideRight

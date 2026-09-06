@@ -8,7 +8,7 @@ use std::mem::MaybeUninit;
 use std::time::Duration;
 
 // ==============================================================================
-// 1. TERMINAL RAW MODE RAII GUARD
+// 1. TERMINAL RAW MODE RAII GUARD (STAIR-STEPPING & CURSOR PROTECTED)
 // ==============================================================================
 
 struct RawModeGuard {
@@ -29,9 +29,16 @@ impl RawModeGuard {
             let orig_termios = orig.assume_init();
             let mut raw = orig_termios;
             libc::cfmakeraw(&mut raw);
+            // CRITICAL: Re-enable OPOST and ONLCR in output flags.
+            // Without ONLCR, \n does NOT perform a Carriage Return (\r),
+            // which causes every subsequent line to start at the column of the previous line (stair-stepping).
+            raw.c_oflag |= libc::OPOST | libc::ONLCR;
             if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) != 0 {
                 return None;
             }
+            // Hide terminal cursor while in TUI dashboard mode
+            let _ = io::stdout().write_all(b"\x1b[?25l");
+            let _ = io::stdout().flush();
             Some(Self {
                 orig_termios,
                 active: true,
@@ -44,6 +51,9 @@ impl RawModeGuard {
             unsafe {
                 libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.orig_termios);
             }
+            // Show cursor for interactive prompts
+            let _ = io::stdout().write_all(b"\x1b[?25h");
+            let _ = io::stdout().flush();
             self.active = false;
         }
     }
@@ -53,8 +63,12 @@ impl RawModeGuard {
             unsafe {
                 let mut raw = self.orig_termios;
                 libc::cfmakeraw(&mut raw);
+                raw.c_oflag |= libc::OPOST | libc::ONLCR;
                 libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw);
             }
+            // Re-hide cursor
+            let _ = io::stdout().write_all(b"\x1b[?25l");
+            let _ = io::stdout().flush();
             self.active = true;
         }
     }
@@ -67,8 +81,8 @@ impl Drop for RawModeGuard {
                 libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.orig_termios);
             }
         }
-        // Restore cursor & clear
-        let _ = io::stdout().write_all(b"\x1b[?25h");
+        // Restore cursor and move to newline
+        let _ = io::stdout().write_all(b"\x1b[?25h\r\n");
         let _ = io::stdout().flush();
     }
 }
@@ -98,7 +112,7 @@ fn format_time(seconds: u64) -> String {
 }
 
 fn render_progress_bar(pos: u64, length: u64, width: usize) -> String {
-    let w = width.max(8);
+    let w = width.clamp(6, 26);
     let ratio = if length > 0 {
         (pos as f64 / length as f64).clamp(0.0, 1.0)
     } else {
@@ -117,14 +131,14 @@ fn render_volume_bar(vol: u32, width: usize) -> String {
     format!("Ses: %{:<3} [{}]", vol, bar)
 }
 
-fn make_row(content: &str, width: usize) -> String {
+fn make_row(content: &str, inner_w: usize) -> String {
     let clean = strip_ansi(content);
     let vis_len = clean.chars().count();
-    if vis_len > width {
-        let truncated: String = clean.chars().take(width).collect();
+    if vis_len > inner_w {
+        let truncated: String = clean.chars().take(inner_w).collect();
         format!("│ {} │", truncated)
     } else {
-        let padding = " ".repeat(width - vis_len);
+        let padding = " ".repeat(inner_w - vis_len);
         format!("│ {}{} │", content, padding)
     }
 }
@@ -150,41 +164,45 @@ fn render_compact_view(
     frame_idx: usize,
     cols: u16,
 ) -> String {
-    let w = (cols as usize).saturating_sub(2).clamp(40, 68);
+    let w = (cols as usize).saturating_sub(2).clamp(46, 68);
     let inner_w = w.saturating_sub(4);
 
     let is_playing = data.status == "PLAYING";
-    let title = sanitize_terminal_str(&data.title, 40, 256);
-    let artist = sanitize_terminal_str(&data.artist, 35, 256);
-    let src_label = sanitize_terminal_str(&data.source_name, 16, 64);
-    let quality = sanitize_terminal_str(&data.quality_label, 40, 128);
+    let title = sanitize_terminal_str(&data.title, inner_w.saturating_sub(6), 256);
+    let artist = sanitize_terminal_str(&data.artist, inner_w.saturating_sub(10), 256);
+    let src_label = sanitize_terminal_str(&data.source_name, 14, 64);
+    let quality = sanitize_terminal_str(&data.quality_label, inner_w.saturating_sub(4), 128);
 
-    let track_full = if !artist.is_empty() {
-        sanitize_terminal_str(&format!("{} • {}", title, artist), inner_w.saturating_sub(4), 256)
+    let track_full = if !artist.is_empty() && artist != "OmaPlayer" {
+        format!("{} • {}", title, artist)
     } else {
-        sanitize_terminal_str(&title, inner_w.saturating_sub(4), 256)
+        title
     };
+    let track_bounded: String = track_full.chars().take(inner_w.saturating_sub(4)).collect();
 
-    let (st_badge, wave) = if is_playing {
+    let (st_badge, raw_wave) = if is_playing {
         (
             "\x1b[1;32m▶ CALIYOR\x1b[0m",
             wave_frames[frame_idx % wave_frames.len()],
         )
     } else if data.status == "PAUSED" {
         (
-            "\x1b[1;33m⏸ DURDU\x1b[0m",
-            " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ",
+            "\x1b[1;33m⏸ DURDU\x1b[0m  ",
+            "─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─",
         )
     } else {
         (
-            "\x1b[0;90m■ KAPALI\x1b[0m",
-            " ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ",
+            "\x1b[0;90m■ KAPALI\x1b[0m ",
+            "─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─",
         )
     };
 
+    let wave_slice: String = raw_wave.chars().take(inner_w.saturating_sub(4)).collect();
+
     let mut buf = Vec::new();
-    buf.push("\x1b[H\x1b[J".to_string());
-    buf.push(format!("\x1b[1;36m┌{}┐\x1b[0m", "─".repeat(inner_w + 2)));
+
+    // Top border - starts with cursor home \x1b[H so no empty top line is created
+    buf.push(format!("\x1b[H\x1b[1;36m┌{}┐\x1b[0m", "─".repeat(inner_w + 2)));
 
     // Header
     let h_left = "  \x1b[1;37mOMAPLAYER\x1b[0m";
@@ -193,7 +211,6 @@ fn render_compact_view(
     let spaces = inner_w
         .saturating_sub(left_clean.chars().count())
         .saturating_sub(h_right.chars().count())
-        .saturating_sub(2)
         .max(1);
     buf.push(make_row(
         &format!("{}{}\x1b[0;90m{}\x1b[0m", h_left, " ".repeat(spaces), h_right),
@@ -203,7 +220,7 @@ fn render_compact_view(
 
     // Track Info
     buf.push(make_row("", inner_w));
-    buf.push(make_row(&format!("  \x1b[1;32m{}\x1b[0m", track_full), inner_w));
+    buf.push(make_row(&format!("  \x1b[1;32m{}\x1b[0m", track_bounded), inner_w));
 
     // Quality
     let q_color = if data.is_lossless { "\x1b[1;35m" } else { "\x1b[1;33m" };
@@ -213,9 +230,9 @@ fn render_compact_view(
     let p_bar = render_progress_bar(data.position_sec, data.length_sec, inner_w.saturating_sub(28));
     buf.push(make_row(&format!("  {} {}", st_badge, p_bar), inner_w));
 
-    // Wave
+    // Wave / Spectrum
     buf.push(make_row("", inner_w));
-    buf.push(make_row(&format!("  \x1b[1;36m{}\x1b[0m", wave), inner_w));
+    buf.push(make_row(&format!("  \x1b[1;36m{}\x1b[0m", wave_slice), inner_w));
     buf.push(make_row("", inner_w));
 
     // Divider
@@ -224,9 +241,9 @@ fn render_compact_view(
     // Footer
     buf.push(make_row("  \x1b[1;32m1\x1b[0m:Spotify \x1b[1;31m2\x1b[0m:YT \x1b[1;33m3\x1b[0m:Radyo \x1b[1;35mp\x1b[0m:Listeler \x1b[1;36m5\x1b[0m:Hesap \x1b[1;37mf\x1b[0m:Ara", inner_w));
     buf.push(make_row("  \x1b[1;37mSpace\x1b[0m:Oynat/Dur   \x1b[1;37m+/-\x1b[0m:Ses   \x1b[1;31mx\x1b[0m:Durdur   \x1b[1;31mq\x1b[0m:Cikis", inner_w));
-    buf.push(format!("\x1b[1;36m└{}┘\x1b[0m\n", "─".repeat(inner_w + 2)));
+    buf.push(format!("\x1b[1;36m└{}┘\x1b[0m", "─".repeat(inner_w + 2)));
 
-    buf.join("\n")
+    buf.join("\r\n")
 }
 
 fn render_fullscreen_view(
@@ -236,24 +253,25 @@ fn render_fullscreen_view(
     frame_idx: usize,
     cols: u16,
 ) -> String {
-    let w = (cols as usize).saturating_sub(2).min(124);
-    let w_left = 30;
-    let w_right = 32;
-    let w_mid = w.saturating_sub(w_left + w_right + 4);
+    let w_left = 28;
+    let w_right = 30;
+    let w_total = (cols as usize).saturating_sub(2).clamp(88, 120);
+    let w_mid = w_total.saturating_sub(w_left + w_right + 4);
 
     let is_playing = data.status == "PLAYING";
-    let title = sanitize_terminal_str(&data.title, 50, 256);
-    let artist = sanitize_terminal_str(&data.artist, 45, 256);
-    let src_label = sanitize_terminal_str(&data.source_name, 24, 64);
-    let codec = sanitize_terminal_str(&data.codec, 16, 64);
-    let sr = sanitize_terminal_str(&data.sample_rate, 16, 64);
-    let auth_user = sanitize_terminal_str(&auth.spotify_user, 20, 64);
+    let title = sanitize_terminal_str(&data.title, w_mid.saturating_sub(6), 256);
+    let artist = sanitize_terminal_str(&data.artist, w_mid.saturating_sub(8), 256);
+    let src_label = sanitize_terminal_str(&data.source_name, 22, 64);
+    let codec = sanitize_terminal_str(&data.codec, 14, 64);
+    let sr = sanitize_terminal_str(&data.sample_rate, 14, 64);
+    let auth_user = sanitize_terminal_str(&auth.spotify_user, 18, 64);
 
-    let track_full = if !artist.is_empty() {
-        sanitize_terminal_str(&format!("{} • {}", title, artist), w_mid.saturating_sub(4), 256)
+    let track_full = if !artist.is_empty() && artist != "OmaPlayer" {
+        format!("{} • {}", title, artist)
     } else {
-        sanitize_terminal_str(&title, w_mid.saturating_sub(4), 256)
+        title
     };
+    let track_bounded: String = track_full.chars().take(w_mid.saturating_sub(4)).collect();
 
     let st_text = if is_playing {
         "\x1b[1;32m▶ CALIYOR (Hi-Res Engine)\x1b[0m"
@@ -263,18 +281,19 @@ fn render_fullscreen_view(
         "\x1b[0;90m■ BEKLEMEDE\x1b[0m"
     };
 
-    let wave1 = wave_frames[frame_idx % wave_frames.len()];
-    let wave2 = wave_frames[(frame_idx + 2) % wave_frames.len()];
+    let raw_wave1 = wave_frames[frame_idx % wave_frames.len()];
+    let raw_wave2 = wave_frames[(frame_idx + 2) % wave_frames.len()];
+    let wave1: String = raw_wave1.chars().take(w_mid.saturating_sub(4)).collect();
+    let wave2: String = raw_wave2.chars().take(w_mid.saturating_sub(4)).collect();
 
     let mut buf = Vec::new();
-    buf.push("\x1b[H\x1b[J".to_string());
 
     // Top Frame
-    buf.push(format!("\x1b[1;35m┌{}┐\x1b[0m", "─".repeat(w)));
-    let title_bar = "OMAPLAYER PRO HI-FI STUDIO • GAME GARAJ SLAYER 4 ULTRA DAC";
+    buf.push(format!("\x1b[H\x1b[1;35m┌{}┐\x1b[0m", "─".repeat(w_total.saturating_sub(2))));
+    let title_bar = "OMAPLAYER PRO HI-FI STUDIO • HIGH PERFORMANCE AUDIO WORKSTATION";
     buf.push(format!(
         "│ {} │",
-        pad_cell(&format!("\x1b[1;37m{}\x1b[0m", title_bar), w.saturating_sub(2))
+        pad_cell(&format!("\x1b[1;37m{}\x1b[0m", title_bar), w_total.saturating_sub(4))
     ));
     buf.push(format!(
         "\x1b[1;35m├{}┬{}┬{}┤\x1b[0m",
@@ -302,7 +321,7 @@ fn render_fullscreen_view(
 
     // Row 1
     let r1_1 = " \x1b[1;32m[1]\x1b[0m Spotify Premium Stüdyo";
-    let r1_2 = format!(" \x1b[1;32m{}\x1b[0m", track_full);
+    let r1_2 = format!(" \x1b[1;32m{}\x1b[0m", track_bounded);
     let r1_3 = " Cikis: PipeWire / ALSA";
     buf.push(format!(
         "│{}│{}│{}│",
@@ -393,22 +412,22 @@ fn render_fullscreen_view(
         pad_cell(c3_f, w_right)
     ));
     buf.push(format!(
-        "\x1b[1;35m└{}┴{}┴{}┘\x1b[0m\n",
+        "\x1b[1;35m└{}┴{}┴{}┘\x1b[0m",
         "─".repeat(w_left),
         "─".repeat(w_mid),
         "─".repeat(w_right)
     ));
 
-    buf.join("\n")
+    buf.join("\r\n")
 }
 
 // ==============================================================================
-// 4. DIALOGS
+// 4. INTERACTIVE DIALOGS
 // ==============================================================================
 
 fn search_dialog(guard: &mut RawModeGuard) {
     guard.pause();
-    print!("\x1b[H\x1b[J");
+    print!("\x1b[2J\x1b[H");
     println!("\x1b[1;36m┌──────────────────────────────────────────────────────────┐\x1b[0m");
     println!("│  \x1b[1;37mOMAPLAYER ARAMA • Şarkı veya Sanatçı Yazın\x1b[0m              │");
     println!("\x1b[1;36m└──────────────────────────────────────────────────────────┘\x1b[0m\n");
@@ -429,7 +448,7 @@ fn search_dialog(guard: &mut RawModeGuard) {
 
 fn playlists_dialog(guard: &mut RawModeGuard) {
     guard.pause();
-    print!("\x1b[H\x1b[J");
+    print!("\x1b[2J\x1b[H");
     println!("\x1b[1;35m┌──────────────────────────────────────────────────────────┐\x1b[0m");
     println!("│  📂 \x1b[1;37mKİŞİSEL ÇALMA LİSTELERİ & ARŞİV\x1b[0m                      │");
     println!("\x1b[1;35m├──────────────────────────────────────────────────────────┤\x1b[0m");
@@ -467,7 +486,7 @@ fn playlists_dialog(guard: &mut RawModeGuard) {
 
 fn radio_dialog(guard: &mut RawModeGuard) {
     guard.pause();
-    print!("\x1b[H\x1b[J");
+    print!("\x1b[2J\x1b[H");
     println!("\x1b[1;33m┌──────────────────────────────────────────────────────────┐\x1b[0m");
     println!("│  \x1b[1;37mCANLI İNTERNET RADYOLARI • 7/24 Kesintisiz Yayın\x1b[0m        │");
     println!("\x1b[1;33m├──────────────────────────────────────────────────────────┤\x1b[0m");
@@ -509,7 +528,7 @@ fn radio_dialog(guard: &mut RawModeGuard) {
 fn account_dialog(guard: &mut RawModeGuard) {
     guard.pause();
     let mut auth = get_auth_data();
-    print!("\x1b[H\x1b[J");
+    print!("\x1b[2J\x1b[H");
     println!("\x1b[1;36m┌──────────────────────────────────────────────────────────┐\x1b[0m");
     println!("│  \x1b[1;37mHESAP & ÜYELİK AYARLARI\x1b[0m                                 │");
     println!("\x1b[1;36m├──────────────────────────────────────────────────────────┤\x1b[0m");
@@ -586,9 +605,20 @@ fn main() {
     ];
 
     let mut frame_idx = 0;
+    let mut last_size = (0u16, 0u16);
+
+    // Initial clear
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
 
     loop {
         let (cols, rows) = get_terminal_size();
+        if (cols, rows) != last_size {
+            print!("\x1b[2J\x1b[H");
+            let _ = io::stdout().flush();
+            last_size = (cols, rows);
+        }
+
         let data = get_playback_info();
         let auth = get_auth_data();
 
@@ -668,4 +698,8 @@ fn main() {
 
         frame_idx = (frame_idx + 1) % wave_frames.len();
     }
+
+    // Clean exit
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
 }
