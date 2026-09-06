@@ -1,7 +1,7 @@
 use omaplayer::{
     control_playback, get_auth_data, get_playback_info, get_radio_streams,
     play_query_stream, play_stream, sanitize_terminal_str, save_auth_data, start_spotify_oauth,
-    strip_ansi, AuthData, PlaybackInfo,
+    strip_ansi, AuthData, PlaybackInfo, DEFAULT_SPOTIFY_CLIENT_ID,
 };
 use std::io::{self, Write};
 use std::mem::MaybeUninit;
@@ -544,7 +544,7 @@ fn account_dialog(guard: &mut RawModeGuard) {
     } else {
         "Bağlı Değil"
     };
-    let cid_preview = if !auth.spotify_client_id.is_empty() {
+    let cid_preview = if !auth.spotify_client_id.is_empty() && !auth.spotify_client_id.contains('@') {
         let len = auth.spotify_client_id.len();
         if len > 8 {
             format!("{}...{}", &auth.spotify_client_id[..4], &auth.spotify_client_id[len - 4..])
@@ -552,13 +552,13 @@ fn account_dialog(guard: &mut RawModeGuard) {
             auth.spotify_client_id.clone()
         }
     } else {
-        "Yok".to_string()
+        "Varsayılan (Oma)".to_string()
     };
     println!("│  OAuth:   {:<18}  Client:  {:<16}  │", oauth_status, cid_preview);
     println!("\x1b[1;36m├──────────────────────────────────────────────────────────┤\x1b[0m");
-    println!("│  [1] 🌐 Spotify Web Hesabını Bağla (OAuth PKCE Tarayıcı) │");
+    println!("│  [1] 🌐 Spotify Web Hesabını Bağla (Tek Tıkla Tarayıcı)  │");
     println!("│  [2] 🎧 Yerel Spotify Desktop Uygulamasını Başlat        │");
-    println!("│  [3] 🔑 Spotify Developer Dashboard'u Aç (Client ID Al)  │");
+    println!("│  [3] 🔑 Özel Developer Client ID Tanımla                 │");
     println!("│  [4] 🍪 YouTube Music Premium Köprüsü                    │");
     println!("│  [5] ✕ Oturumları ve Token'ları Sıfırla                  │");
     println!("│  [0] ← Geri Dön                                          │");
@@ -570,49 +570,32 @@ fn account_dialog(guard: &mut RawModeGuard) {
     if io::stdin().read_line(&mut line).is_ok() {
         match line.trim() {
             "1" => {
-                println!("\n  \x1b[1;36m--- SPOTIFY OAUTH 2.0 PKCE GİRİŞİ ---\x1b[0m");
-                let mut client_id = auth.spotify_client_id.clone();
-                if !client_id.is_empty() {
-                    print!("  Kayıtlı Client ID [{}] kullanılsın mı? [E/h]: ", client_id);
-                    let _ = io::stdout().flush();
-                    let mut ans = String::new();
-                    let _ = io::stdin().read_line(&mut ans);
-                    if ans.trim().eq_ignore_ascii_case("h") {
-                        client_id.clear();
-                    }
-                }
-                if client_id.is_empty() {
-                    println!("  \x1b[1;33mİpucu: Henüz Client ID'niz yoksa menüden [3]'e basarak 30 saniyede ücretsiz alabilirsiniz.\x1b[0m");
-                    print!("  Spotify Client ID girin: ");
-                    let _ = io::stdout().flush();
-                    let mut input_cid = String::new();
-                    let _ = io::stdin().read_line(&mut input_cid);
-                    client_id = input_cid.trim().to_string();
-                }
-
-                if !client_id.is_empty() {
-                    match start_spotify_oauth(&client_id) {
-                        Ok(new_auth) => {
-                            println!("\n  \x1b[1;32m✓ SPOTIFY BAŞARIYLA BAĞLANDI!\x1b[0m");
-                            println!("  Kullanıcı: \x1b[1;37m{}\x1b[0m", new_auth.spotify_user);
-                            println!(
-                                "  Üyelik:    \x1b[1;32m{}\x1b[0m",
-                                if new_auth.spotify_premium {
-                                    "Premium (320 kbps)"
-                                } else {
-                                    "Standart / Free"
-                                }
-                            );
-                            std::thread::sleep(Duration::from_secs(2));
-                        }
-                        Err(e) => {
-                            println!("\n  \x1b[1;31m✕ Yetkilendirme Başarısız:\x1b[0m {}", e);
-                            std::thread::sleep(Duration::from_secs(2));
-                        }
-                    }
+                println!("\n  \x1b[1;36m--- SPOTIFY WEB HESABINI BAĞLA (OAUTH 2.0 PKCE) ---\x1b[0m");
+                let client_id = if !auth.spotify_client_id.is_empty() && !auth.spotify_client_id.contains('@') {
+                    auth.spotify_client_id.clone()
                 } else {
-                    println!("\n  \x1b[1;33mClient ID girilmedi, işlem iptal edildi.\x1b[0m");
-                    std::thread::sleep(Duration::from_millis(1200));
+                    DEFAULT_SPOTIFY_CLIENT_ID.to_string()
+                };
+
+                println!("  \x1b[1;32m✓\x1b[0m OmaPlayer resmi entegrasyonu hazırlandı.");
+                match start_spotify_oauth(&client_id) {
+                    Ok(new_auth) => {
+                        println!("\n  \x1b[1;32m✓ SPOTIFY BAŞARIYLA BAĞLANDI!\x1b[0m");
+                        println!("  Kullanıcı: \x1b[1;37m{}\x1b[0m", new_auth.spotify_user);
+                        println!(
+                            "  Üyelik:    \x1b[1;32m{}\x1b[0m",
+                            if new_auth.spotify_premium {
+                                "Premium (320 kbps)"
+                            } else {
+                                "Standart / Free"
+                            }
+                        );
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
+                    Err(e) => {
+                        println!("\n  \x1b[1;31m✕ Yetkilendirme Başarısız:\x1b[0m {}", e);
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
                 }
             }
             "2" => {
@@ -622,22 +605,31 @@ fn account_dialog(guard: &mut RawModeGuard) {
                 std::thread::sleep(Duration::from_millis(1500));
             }
             "3" => {
-                println!("\n  \x1b[1;36m┌────────────────────────────────────────────────────────┐\x1b[0m");
-                println!("  │ \x1b[1;37m🔑 ÜCRETSİZ SPOTIFY CLIENT ID NASIL ALINIR?\x1b[0m           │");
-                println!("  \x1b[1;36m├────────────────────────────────────────────────────────┤\x1b[0m");
-                println!("  │ 1. Tarayıcıda açılan Developer Dashboard'a giriş yapın │");
-                println!("  │ 2. 'Create App' butonuna basın (Ör: OmaPlayer)         │");
-                println!("  │ 3. Redirect URI alanına ekleyin:                       │");
-                println!("  │    \x1b[1;32mhttp://127.0.0.1:8888/callback\x1b[0m                      │");
-                println!("  │ 4. Settings sekmesinden 'Client ID' kopyalayın.        │");
-                println!("  \x1b[1;36m└────────────────────────────────────────────────────────┘\x1b[0m\n");
-                let _ = std::process::Command::new("xdg-open")
-                    .arg("https://developer.spotify.com/dashboard")
-                    .spawn();
-                println!("  Tarayıcı açıldı. Devam etmek için Enter'a basın...");
+                println!("\n  \x1b[1;36m--- ÖZEL DEVELOPER CLIENT ID TANIMLA ---\x1b[0m");
+                println!("  \x1b[1;33mNot: Normal kullanıcıların Client ID girmesine gerek yoktur (OmaPlayer varsayılan olarak hazırdır).\x1b[0m");
+                println!("  \x1b[1;37mKendi Spotify Developer uygulamanızın 32 karakterlik Client ID'sini girin\x1b[0m");
+                println!("  (Varsayılana dönmek için boş bırakıp Enter'a basın):\n");
+                print!("  Client ID: ");
                 let _ = io::stdout().flush();
-                let mut tmp = String::new();
-                let _ = io::stdin().read_line(&mut tmp);
+                let mut input_cid = String::new();
+                let _ = io::stdin().read_line(&mut input_cid);
+                let trimmed = input_cid.trim();
+                if trimmed.is_empty() {
+                    auth.spotify_client_id.clear();
+                    save_auth_data(&auth);
+                    println!("\n  \x1b[1;32m✓ Varsayılan OmaPlayer Client ID'sine dönüldü.\x1b[0m");
+                    std::thread::sleep(Duration::from_millis(1200));
+                } else if trimmed.contains('@') {
+                    println!("\n  \x1b[1;31m✕ HATA: E-posta adresi girdiniz!\x1b[0m");
+                    println!("  Client ID e-posta adresi değildir. Spotify Developer Dashboard'dan alınan 32 haneli API anahtarıdır.");
+                    println!("  E-posta yazmanıza gerek yoktur, [1]'e basarak doğrudan tarayıcı ile bağlanabilirsiniz.");
+                    std::thread::sleep(Duration::from_secs(3));
+                } else {
+                    auth.spotify_client_id = trimmed.to_string();
+                    save_auth_data(&auth);
+                    println!("\n  \x1b[1;32m✓ Özel Client ID kaydedildi: {}\x1b[0m", trimmed);
+                    std::thread::sleep(Duration::from_millis(1200));
+                }
             }
             "4" => {
                 auth.yt_cookies = true;

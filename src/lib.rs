@@ -562,11 +562,15 @@ pub fn extract_query_param(req_line: &str, param: &str) -> Option<String> {
     None
 }
 
+pub const DEFAULT_SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+
 pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
-    let client_id = client_id.trim();
-    if client_id.is_empty() {
-        return Err("Client ID boş olamaz.".to_string());
-    }
+    let raw = client_id.trim();
+    let effective_client_id = if raw.is_empty() || raw.contains('@') {
+        DEFAULT_SPOTIFY_CLIENT_ID
+    } else {
+        raw
+    };
 
     let verifier = generate_code_verifier();
     let challenge = generate_code_challenge(&verifier);
@@ -586,7 +590,7 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
 
     let auth_url = format!(
         "https://accounts.spotify.com/authorize?response_type=code&client_id={}&scope={}&redirect_uri={}&code_challenge_method=S256&code_challenge={}&state={}",
-        client_id, scopes_encoded, redirect_encoded, challenge, state_slice
+        effective_client_id, scopes_encoded, redirect_encoded, challenge, state_slice
     );
 
     println!("\n  \x1b[1;36m[1/3]\x1b[0m Yerel yetkilendirme dinleyicisi hazır: http://127.0.0.1:8888/callback");
@@ -658,7 +662,7 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
 
     let post_body = format!(
         "grant_type=authorization_code&client_id={}&code={}&redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback&code_verifier={}",
-        client_id, code, verifier
+        effective_client_id, code, verifier
     );
 
     let token_output = Command::new("/usr/bin/curl")
@@ -735,7 +739,7 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
     let mut auth = get_auth_data();
     auth.spotify_user = sanitize_terminal_str(&user_display, 40, 128);
     auth.spotify_premium = is_premium;
-    auth.spotify_client_id = client_id.to_string();
+    auth.spotify_client_id = effective_client_id.to_string();
     auth.spotify_access_token = access_token;
     auth.spotify_refresh_token = refresh_token;
     auth.spotify_token_expires_at = now + expires_in;
