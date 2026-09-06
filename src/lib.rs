@@ -562,7 +562,7 @@ pub fn extract_query_param(req_line: &str, param: &str) -> Option<String> {
     None
 }
 
-pub const DEFAULT_SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub const DEFAULT_SPOTIFY_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 
 pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
     let raw = client_id.trim();
@@ -572,20 +572,32 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
         raw
     };
 
+    let is_default = effective_client_id == DEFAULT_SPOTIFY_CLIENT_ID;
+    let port = if is_default { 8989 } else { 8888 };
+    let redirect_uri = if is_default {
+        "http://127.0.0.1:8989/login"
+    } else {
+        "http://127.0.0.1:8888/callback"
+    };
+    let redirect_encoded = if is_default {
+        "http%3A%2F%2F127.0.0.1%3A8989%2Flogin"
+    } else {
+        "http%3A%2F%2F127.0.0.1%3A8888%2Fcallback"
+    };
+
     let verifier = generate_code_verifier();
     let challenge = generate_code_challenge(&verifier);
     let state = generate_code_verifier();
     let state_slice = if state.len() >= 16 { &state[..16] } else { &state };
-    let redirect_encoded = "http%3A%2F%2F127.0.0.1%3A8888%2Fcallback";
 
-    let listener = TcpListener::bind("127.0.0.1:8888")
-        .map_err(|e| format!("127.0.0.1:8888 portu açılamadı: {}", e))?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .map_err(|e| format!("127.0.0.1:{} portu açılamadı: {}", port, e))?;
     
     listener
         .set_nonblocking(true)
         .map_err(|e| format!("Sunucu modu ayarlanamadı: {}", e))?;
 
-    let scopes = "user-read-private user-read-email user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private user-library-read";
+    let scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public user-follow-modify user-follow-read user-read-playback-position user-top-read user-read-recently-played user-library-modify user-library-read user-read-email user-read-private";
     let scopes_encoded = scopes.replace(' ', "%20");
 
     let auth_url = format!(
@@ -593,7 +605,7 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
         effective_client_id, scopes_encoded, redirect_encoded, challenge, state_slice
     );
 
-    println!("\n  \x1b[1;36m[1/3]\x1b[0m Yerel yetkilendirme dinleyicisi hazır: http://127.0.0.1:8888/callback");
+    println!("\n  \x1b[1;36m[1/3]\x1b[0m Yerel yetkilendirme dinleyicisi hazır: {}", redirect_uri);
     println!("  \x1b[1;36m[2/3]\x1b[0m Web tarayıcısında Spotify yetkilendirme sayfası açılıyor...");
 
     let _ = Command::new("xdg-open").arg(&auth_url).spawn();
@@ -614,7 +626,7 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
                 let req_text = String::from_utf8_lossy(&buf[..n]);
 
                 if let Some(first_line) = req_text.lines().next() {
-                    if first_line.contains("/callback") {
+                    if first_line.contains("/login") || first_line.contains("/callback") {
                         if let Some(err_val) = extract_query_param(first_line, "error") {
                             let resp_body = format!(
                                 "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>OmaPlayer • Hata</title><style>body{{background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}}.box{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;text-align:center;max-width:440px;}}h1{{color:#f85149;}}</style></head><body><div class=\"box\"><h1>Yetkilendirme Reddedildi</h1><p>Hata: {}</p></div></body></html>",
@@ -661,8 +673,8 @@ pub fn start_spotify_oauth(client_id: &str) -> Result<AuthData, String> {
     println!("\n  \x1b[1;32m✓\x1b[0m Onay kodu alındı. Güvenli erişim anahtarları talep ediliyor...");
 
     let post_body = format!(
-        "grant_type=authorization_code&client_id={}&code={}&redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback&code_verifier={}",
-        effective_client_id, code, verifier
+        "grant_type=authorization_code&client_id={}&code={}&redirect_uri={}&code_verifier={}",
+        effective_client_id, code, redirect_encoded, verifier
     );
 
     let token_output = Command::new("/usr/bin/curl")
