@@ -91,7 +91,7 @@ Panel {
     bar: root.bar
     text: root.isPlaying ? ("MUSIC: " + root.trackTitle.slice(0, 16)) : "MUSIC: IDLE"
     tooltipText: "OmaPlayer Audio Hub\nStatus: " + root.playbackStatus + "\nTrack: " + root.trackTitle + "\nArtist: " + root.trackArtist + "\nSource: " + root.sourceName + "\nEngine: Native Rust"
-    onClicked: root.toggle()
+    onPressed: function(b) { if (root.opened) root.close(); else root.open(); }
   }
 
   KeyboardPanel {
