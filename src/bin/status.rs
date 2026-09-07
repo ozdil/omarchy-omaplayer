@@ -5,43 +5,43 @@ fn main() {
 
     let (text, css, tooltip) = if !data.is_running {
         (
-            format!("󰎆 {}", data.source_name),
+            "MUSIC: IDLE".to_string(),
             "normal".to_string(),
             format!(
-                "🎵 OmaPlayer • Evrensel Müzik Stüdyosu\n• Aktif Kaynak: {}\n• Durum: Çalmıyor\n\n[Sol Tık] Oynatıcıyı / Radyoyu Aç",
+                "OmaPlayer Audio Studio\nSource: {}\nStatus: STOPPED\nEngine: Native Rust",
                 data.source_name
             ),
         )
     } else if data.status == "PLAYING" {
         let track_str = if !data.artist.is_empty() {
-            format!("{} • {}", data.title, data.artist)
+            format!("{} - {}", data.title, data.artist)
         } else {
             data.title.clone()
         };
-        let short_track: String = track_str.chars().take(26).collect();
+        let short_track: String = track_str.chars().take(22).collect();
         (
-            format!("󰎆 {}", short_track),
+            format!("MUSIC: {}", short_track.to_uppercase()),
             "active".to_string(),
             format!(
-                "🎵 OmaPlayer • Çalıyor ({})\n• Parça: {}\n• Sanatçı: {}\n• Albüm: {}\n• Ses: %{}\n\n[Sol Tık] CLI Müzik Merkezini Aç",
+                "OmaPlayer Audio Studio\nStatus: PLAYING ({})\nTrack: {}\nArtist: {}\nAlbum: {}\nVolume: {}%\nEngine: Native Rust",
                 data.source_name, data.title, data.artist, data.album, data.volume_pct
             ),
         )
     } else if data.status == "PAUSED" {
         let short_title: String = data.title.chars().take(18).collect();
         (
-            format!("󰎆 Duraklatıldı: {}", short_title),
+            format!("MUSIC: PAUSED ({})", short_title.to_uppercase()),
             "normal".to_string(),
             format!(
-                "🎵 OmaPlayer • Duraklatıldı ({})\n• Parça: {}\n• Sanatçı: {}\n\n[Sol Tık] CLI Müzik Merkezini Aç",
+                "OmaPlayer Audio Studio\nStatus: PAUSED ({})\nTrack: {}\nArtist: {}\nEngine: Native Rust",
                 data.source_name, data.title, data.artist
             ),
         )
     } else {
         (
-            "󰎆 OmaPlayer".to_string(),
+            "MUSIC: IDLE".to_string(),
             "normal".to_string(),
-            "🎵 OmaPlayer • Evrensel Müzik Çalar".to_string(),
+            "OmaPlayer Audio Studio\nStatus: IDLE\nEngine: Native Rust".to_string(),
         )
     };
 

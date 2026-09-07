@@ -24,10 +24,10 @@ impl ServiceKind {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            ServiceKind::Spotify => "🟢",
-            ServiceKind::YouTubeMusic => "🔴",
-            ServiceKind::WebRadio => "📻",
-            ServiceKind::LocalLibrary => "📁",
+            ServiceKind::Spotify => "",
+            ServiceKind::YouTubeMusic => "",
+            ServiceKind::WebRadio => "",
+            ServiceKind::LocalLibrary => "",
         }
     }
 }

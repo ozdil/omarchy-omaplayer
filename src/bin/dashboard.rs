@@ -450,15 +450,15 @@ fn playlists_dialog(guard: &mut RawModeGuard) {
     guard.pause();
     print!("\x1b[2J\x1b[H");
     println!("\x1b[1;35m┌──────────────────────────────────────────────────────────┐\x1b[0m");
-    println!("│  📂 \x1b[1;37mKİŞİSEL ÇALMA LİSTELERİ & ARŞİV\x1b[0m                      │");
+    println!("│  \x1b[1;37mKİŞİSEL ÇALMA LİSTELERİ & ARŞİV\x1b[0m                      │");
     println!("\x1b[1;35m├──────────────────────────────────────────────────────────┤\x1b[0m");
-    println!("│  \x1b[1;32m[1]\x1b[0m ★ Beğenilen Şarkılarım (Liked Songs)               │");
-    println!("│  \x1b[1;36m[2]\x1b[0m ★ Haftalık Keşif Listesi (Discover Weekly)         │");
-    println!("│  \x1b[1;33m[3]\x1b[0m ★ Türkçe Pop, Rap & Alternatif Hitleri              │");
-    println!("│  \x1b[1;34m[4]\x1b[0m ★ Lofi & Kodlama Odaklanma Miksi                     │");
-    println!("│  \x1b[1;35m[5]\x1b[0m ★ Synthwave / Retrowave Cyberpunk Arşivi           │");
-    println!("│  \x1b[1;31m[6]\x1b[0m ★ Efsane Classic Rock Klasikleri                     │");
-    println!("│  \x1b[1;37m[7]\x1b[0m ★ Klasik Müzik & Piyano Konsantrasyon              │");
+    println!("│  \x1b[1;32m[1]\x1b[0m Beğenilen Şarkılarım (Liked Songs)               │");
+    println!("│  \x1b[1;36m[2]\x1b[0m Haftalık Keşif Listesi (Discover Weekly)         │");
+    println!("│  \x1b[1;33m[3]\x1b[0m Türkçe Pop, Rap & Alternatif Hitleri              │");
+    println!("│  \x1b[1;34m[4]\x1b[0m Lofi & Kodlama Odaklanma Miksi                     │");
+    println!("│  \x1b[1;35m[5]\x1b[0m Synthwave / Retrowave Cyberpunk Arşivi           │");
+    println!("│  \x1b[1;31m[6]\x1b[0m Efsane Classic Rock Klasikleri                     │");
+    println!("│  \x1b[1;37m[7]\x1b[0m Klasik Müzik & Piyano Konsantrasyon              │");
     println!("\x1b[1;35m└──────────────────────────────────────────────────────────┘\x1b[0m\n");
     print!("  Çalmak İstediğiniz Liste [1-7]: ");
     let _ = io::stdout().flush();
@@ -556,11 +556,11 @@ fn account_dialog(guard: &mut RawModeGuard) {
     };
     println!("│  OAuth:   {:<18}  Client:  {:<16}  │", oauth_status, cid_preview);
     println!("\x1b[1;36m├──────────────────────────────────────────────────────────┤\x1b[0m");
-    println!("│  [1] 🌐 Spotify Web Hesabını Bağla (Tek Tıkla Tarayıcı)  │");
-    println!("│  [2] 🎧 Yerel Spotify Desktop Uygulamasını Başlat        │");
-    println!("│  [3] 🔑 Özel Developer Client ID Tanımla                 │");
-    println!("│  [4] 🍪 YouTube Music Premium Köprüsü                    │");
-    println!("│  [5] ✕ Oturumları ve Token'ları Sıfırla                  │");
+    println!("│  [1] Spotify Web Hesabını Bağla (Tek Tıkla Tarayıcı)  │");
+    println!("│  [2] Yerel Spotify Desktop Uygulamasını Başlat        │");
+    println!("│  [3] Özel Developer Client ID Tanımla                 │");
+    println!("│  [4] YouTube Music Premium Köprüsü                    │");
+    println!("│  [5] Oturumları ve Token'ları Sıfırla                  │");
     println!("│  [0] ← Geri Dön                                          │");
     println!("\x1b[1;36m└──────────────────────────────────────────────────────────┘\x1b[0m\n");
     print!("  Seçiminiz [0-5]: ");
@@ -577,11 +577,11 @@ fn account_dialog(guard: &mut RawModeGuard) {
                     DEFAULT_SPOTIFY_CLIENT_ID.to_string()
                 };
 
-                println!("  \x1b[1;32m✓\x1b[0m OmaPlayer güvenli entegrasyonu hazırlandı.");
+                println!("  \x1b[1;32m[OK]\x1b[0m OmaPlayer güvenli entegrasyonu hazırlandı.");
                 println!("  \x1b[2m      (Açılan Spotify sayfasında açık kaynaklı istemci kimliği 'ncspot' görünecektir.)\x1b[0m");
                 match start_spotify_oauth(&client_id) {
                     Ok(new_auth) => {
-                        println!("\n  \x1b[1;32m✓ SPOTIFY BAŞARIYLA BAĞLANDI!\x1b[0m");
+                        println!("\n  \x1b[1;32mSPOTIFY BAŞARIYLA BAĞLANDI!\x1b[0m");
                         println!("  Kullanıcı: \x1b[1;37m{}\x1b[0m", new_auth.spotify_user);
                         println!(
                             "  Üyelik:    \x1b[1;32m{}\x1b[0m",
@@ -594,7 +594,7 @@ fn account_dialog(guard: &mut RawModeGuard) {
                         std::thread::sleep(Duration::from_secs(2));
                     }
                     Err(e) => {
-                        println!("\n  \x1b[1;31m✕ Yetkilendirme Başarısız:\x1b[0m {}", e);
+                        println!("\n  \x1b[1;31mYetkilendirme Başarısız:\x1b[0m {}", e);
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -602,7 +602,7 @@ fn account_dialog(guard: &mut RawModeGuard) {
             "2" => {
                 println!("\n  \x1b[1;36mYerel Spotify Desktop başlatılıyor...\x1b[0m");
                 let _ = std::process::Command::new("/usr/bin/spotify").spawn();
-                println!("  \x1b[1;32m✓ Spotify masaüstü uygulaması açıldı. OmaPlayer MPRIS ile otomatik bağlanacak.\x1b[0m");
+                println!("  \x1b[1;32mSpotify masaüstü uygulaması açıldı. OmaPlayer MPRIS ile otomatik bağlanacak.\x1b[0m");
                 std::thread::sleep(Duration::from_millis(1500));
             }
             "3" => {
@@ -618,24 +618,24 @@ fn account_dialog(guard: &mut RawModeGuard) {
                 if trimmed.is_empty() {
                     auth.spotify_client_id.clear();
                     save_auth_data(&auth);
-                    println!("\n  \x1b[1;32m✓ Varsayılan OmaPlayer Client ID'sine dönüldü.\x1b[0m");
+                    println!("\n  \x1b[1;32mVarsayılan OmaPlayer Client ID'sine dönüldü.\x1b[0m");
                     std::thread::sleep(Duration::from_millis(1200));
                 } else if trimmed.contains('@') {
-                    println!("\n  \x1b[1;31m✕ HATA: E-posta adresi girdiniz!\x1b[0m");
+                    println!("\n  \x1b[1;31mHATA: E-posta adresi girdiniz!\x1b[0m");
                     println!("  Client ID e-posta adresi değildir. Spotify Developer Dashboard'dan alınan 32 haneli API anahtarıdır.");
                     println!("  E-posta yazmanıza gerek yoktur, [1]'e basarak doğrudan tarayıcı ile bağlanabilirsiniz.");
                     std::thread::sleep(Duration::from_secs(3));
                 } else {
                     auth.spotify_client_id = trimmed.to_string();
                     save_auth_data(&auth);
-                    println!("\n  \x1b[1;32m✓ Özel Client ID kaydedildi: {}\x1b[0m", trimmed);
+                    println!("\n  \x1b[1;32mÖzel Client ID kaydedildi: {}\x1b[0m", trimmed);
                     std::thread::sleep(Duration::from_millis(1200));
                 }
             }
             "4" => {
                 auth.yt_cookies = true;
                 save_auth_data(&auth);
-                println!("\n  \x1b[1;32m✓ YouTube Music Premium köprüsü kaydedildi!\x1b[0m");
+                println!("\n  \x1b[1;32mYouTube Music Premium köprüsü kaydedildi!\x1b[0m");
                 std::thread::sleep(Duration::from_millis(800));
             }
             "5" => {
@@ -648,7 +648,7 @@ fn account_dialog(guard: &mut RawModeGuard) {
                 auth.yt_cookies = false;
                 auth.qobuz_user = String::new();
                 save_auth_data(&auth);
-                println!("\n  \x1b[1;33m✓ Oturumlar ve erişim anahtarları sıfırlandı.\x1b[0m");
+                println!("\n  \x1b[1;33mOturumlar ve erişim anahtarları sıfırlandı.\x1b[0m");
                 std::thread::sleep(Duration::from_millis(800));
             }
             _ => {}
